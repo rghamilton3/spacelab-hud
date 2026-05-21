@@ -4231,15 +4231,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "slint-rust-template"
-version = "0.1.0"
-dependencies = [
- "slint",
- "slint-build",
- "sysinfo",
-]
-
-[[package]]
 name = "slotmap"
 version = "1.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4386,6 +4377,15 @@ dependencies = [
  "web-sys",
  "windows-sys 0.61.2",
  "x11rb",
+]
+
+[[package]]
+name = "spacelab-hub"
+version = "0.1.0"
+dependencies = [
+ "slint",
+ "slint-build",
+ "sysinfo",
 ]
 
 [[package]]
