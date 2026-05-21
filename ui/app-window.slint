@@ -1,5 +1,7 @@
-import { Theme, SysMetrics } from "theme.slint";
+import { Theme, SysMetrics, VpsMetrics, HudAlert } from "theme.slint";
 import { SystemInfoScreen } from "system-info.slint";
+import { VpsHealthScreen }  from "vps-health.slint";
+import { AlertsScreen }     from "alerts.slint";
 
 export component AppWindow inherits Window {
     title: "SpaceLab-1 Status Console";
@@ -7,14 +9,115 @@ export component AppWindow inherits Window {
     preferred-height: 720px;
     background: Theme.bg;
 
-    // Routing — 0 = SystemInfo, future screens increment
-    in-out property <int> current-page: 0;
+    // ── Screen data ───────────────────────────────────────────────────
+    in property     <SysMetrics> metrics;
+    in property     <string>     clock-str;
+    in-out property <bool>       heartbeat: true;
 
-    in property <SysMetrics> metrics;
+    in property     <VpsMetrics> vps-metrics;
 
-    if current-page == 0: SystemInfoScreen {
+    in property     <[HudAlert]> alerts;
+    in property     <int>        alert-count;
+
+    // ── Swipe state ───────────────────────────────────────────────────
+    in-out property <int>    current-page:   0;
+    property        <int>    committed-page: 0;
+    property        <length> drag-offset:    0px;
+    property        <bool>   is-dragging:    false;
+
+    // ── Screens container (full height) ──────────────────────────────
+    screens-rect := Rectangle {
+        y: 0;
+        width: 3 * root.width;
+        height: root.height;
+
+        SystemInfoScreen {
+            x: 0 * root.width;
+            width: root.width;
+            height: parent.height;
+            metrics:      root.metrics;
+            clock-str:    root.clock-str;
+            heartbeat:    root.heartbeat;
+            show-back:    false;
+            show-forward: root.current-page < 2;
+        }
+
+        VpsHealthScreen {
+            x: 1 * root.width;
+            width: root.width;
+            height: parent.height;
+            metrics:      root.vps-metrics;
+            show-back:    root.current-page > 0;
+            show-forward: root.current-page < 2;
+        }
+
+        AlertsScreen {
+            x: 2 * root.width;
+            width: root.width;
+            height: parent.height;
+            alerts:       root.alerts;
+            alert-count:  root.alert-count;
+            show-back:    true;
+            show-forward: false;
+        }
+
+        states [
+            dragging when root.is-dragging: {
+                x: -(root.committed-page * root.width) + root.drag-offset;
+            }
+            snapped when !root.is-dragging: {
+                x: -(root.current-page * root.width);
+                in {
+                    animate x { duration: 300ms; easing: ease-out; }
+                }
+            }
+        ]
+    }
+
+    // ── Touch / swipe overlay ─────────────────────────────────────────
+    TouchArea {
         width: root.width;
         height: root.height;
-        metrics: root.metrics;
+
+        property <length> press-x;
+
+        pointer-event(e) => {
+            if e.kind == PointerEventKind.down {
+                press-x = self.mouse-x;
+                root.committed-page = root.current-page;
+                root.drag-offset    = 0px;
+                root.is-dragging    = true;
+            } else if e.kind == PointerEventKind.up || e.kind == PointerEventKind.cancel {
+                let delta = self.mouse-x - press-x;
+                let abs-delta = delta < 0px ? -delta : delta;
+
+                if abs-delta < 20px {
+                    // Tap: check edge zones for arrow navigation
+                    if self.mouse-x < 80px && root.current-page > 0 {
+                        root.current-page -= 1;
+                    } else if self.mouse-x > root.width - 80px && root.current-page < 2 {
+                        root.current-page += 1;
+                    }
+                } else if delta < -60px && root.current-page < 2 {
+                    root.current-page += 1;
+                } else if delta > 60px && root.current-page > 0 {
+                    root.current-page -= 1;
+                }
+                root.is-dragging = false;
+            }
+        }
+
+        moved => {
+            if root.is-dragging {
+                let raw = self.mouse-x - press-x;
+                if root.committed-page == 0 && raw > 0px {
+                    root.drag-offset = raw * 0.3;
+                } else if root.committed-page == 2 && raw < 0px {
+                    root.drag-offset = raw * 0.3;
+                } else {
+                    root.drag-offset = raw;
+                }
+            }
+        }
     }
 }

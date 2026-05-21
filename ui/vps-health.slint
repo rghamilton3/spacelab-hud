@@ -1,0 +1,166 @@
+import { Theme, VpsMetrics } from "theme.slint";
+import { MetricCard, MetricBarCard } from "system-info.slint";
+
+// Two-state up/down badge card
+component StatusCard {
+    in property <string> label;
+    in property <bool>   up;
+
+    property <color> state-color: root.up ? Theme.accent : Theme.danger;
+
+    Rectangle {
+        background: Theme.surface;
+        border-radius: 6px;
+        clip: true;
+
+        HorizontalLayout {
+            spacing: 0px;
+            Rectangle {
+                width: 3px;
+                background: state-color;
+                animate background { duration: 400ms; }
+            }
+            VerticalLayout {
+                padding: 14px;
+                spacing: 6px;
+                alignment: center;
+                Text {
+                    text: root.label;
+                    color: Theme.text-label;
+                    font-size: 11px;
+                    letter-spacing: 2px;
+                }
+                Text {
+                    text: root.up ? "ONLINE" : "OFFLINE";
+                    color: state-color;
+                    font-size: 20px;
+                    font-family: "monospace";
+                    animate color { duration: 400ms; }
+                }
+            }
+        }
+    }
+}
+
+export component VpsHealthScreen {
+    in property <VpsMetrics> metrics;
+    in property <bool>       show-back:    false;
+    in property <bool>       show-forward: false;
+
+    VerticalLayout {
+        padding: 0px;
+        spacing: 0px;
+
+        // ── Header ──────────────────────────────────────────────────
+        Rectangle {
+            height: 56px;
+            background: Theme.surface;
+
+            HorizontalLayout {
+                padding-left: 14px;
+                padding-right: 14px;
+                alignment: space-between;
+
+                HorizontalLayout {
+                    spacing: 8px;
+                    Text {
+                        text: "‹";
+                        color: Theme.text-label;
+                        font-size: 28px;
+                        vertical-alignment: center;
+                        opacity: root.show-back ? 0.8 : 0.0;
+                        animate opacity { duration: 200ms; }
+                    }
+                    Text {
+                        text: "VPS HEALTH";
+                        color: Theme.accent;
+                        font-size: 17px;
+                        letter-spacing: 3px;
+                        vertical-alignment: center;
+                    }
+                }
+
+                HorizontalLayout {
+                    spacing: 8px;
+                    alignment: center;
+                    VerticalLayout {
+                        alignment: center;
+                        Rectangle {
+                            width: 8px;
+                            height: 8px;
+                            border-radius: 4px;
+                            background: root.metrics.reachable ? Theme.accent : Theme.danger;
+                            animate background { duration: 400ms; }
+                        }
+                    }
+                    Text {
+                        text: root.metrics.reachable ? "CONNECTED" : "OFFLINE";
+                        color: root.metrics.reachable ? Theme.text-label : Theme.danger;
+                        font-size: 11px;
+                        letter-spacing: 2px;
+                        vertical-alignment: center;
+                        animate color { duration: 400ms; }
+                    }
+                    Text {
+                        text: "›";
+                        color: Theme.text-label;
+                        font-size: 28px;
+                        vertical-alignment: center;
+                        opacity: root.show-forward ? 0.8 : 0.0;
+                        animate opacity { duration: 200ms; }
+                    }
+                }
+            }
+        }
+
+        Rectangle { height: 1px; background: Theme.border; }
+
+        // ── Metrics (VerticalLayout rows for full-width CPU bar) ─────
+        VerticalLayout {
+            padding: 10px;
+            spacing: 7px;
+
+            // Row 1: uptime + load avg
+            HorizontalLayout {
+                spacing: 7px;
+                MetricCard { label: "UPTIME";   value: root.metrics.uptime; }
+                MetricCard { label: "LOAD AVG"; value: root.metrics.load-avg; }
+            }
+
+            // Row 2: full-width CPU bar
+            MetricBarCard {
+                label:     "CPU USAGE";
+                value:     root.metrics.cpu-usage;
+                pct:       root.metrics.cpu-pct;
+                warn-at:   0.65;
+                danger-at: 0.85;
+            }
+
+            // Row 3: RAM + disk
+            HorizontalLayout {
+                spacing: 7px;
+                MetricBarCard {
+                    label:     "MEMORY";
+                    value:     root.metrics.ram;
+                    pct:       root.metrics.ram-pct;
+                    warn-at:   0.75;
+                    danger-at: 0.90;
+                }
+                MetricBarCard {
+                    label:     "DISK /";
+                    value:     root.metrics.disk;
+                    pct:       root.metrics.disk-pct;
+                    warn-at:   0.80;
+                    danger-at: 0.92;
+                }
+            }
+
+            // Row 4: service status badges
+            HorizontalLayout {
+                spacing: 7px;
+                StatusCard { label: "NODE EXPORTER"; up: root.metrics.reachable; }
+                StatusCard { label: "CADVISOR";      up: root.metrics.cadvisor-up; }
+            }
+        }
+    }
+}

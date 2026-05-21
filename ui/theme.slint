@@ -4,9 +4,35 @@ export struct SysMetrics {
     uptime:    string,
     load-avg:  string,
     cpu-usage: string,
+    cpu-pct:   float,
     cpu-temp:  string,
+    temp-pct:  float,
     ram:       string,
+    ram-pct:   float,
     disk:      string,
+    disk-pct:  float,
+    net-rx:    string,
+    net-tx:    string,
+}
+
+export struct VpsMetrics {
+    reachable:   bool,
+    cadvisor-up: bool,
+    uptime:      string,
+    load-avg:    string,
+    cpu-usage:   string,
+    cpu-pct:     float,
+    ram:         string,
+    ram-pct:     float,
+    disk:        string,
+    disk-pct:    float,
+}
+
+export struct HudAlert {
+    name:     string,
+    severity: string,
+    age:      string,
+    summary:  string,
 }
 
 export global Theme {
@@ -14,6 +40,8 @@ export global Theme {
     out property <color> surface:      #0f1828;
     out property <color> border:       #1e2d4a;
     out property <color> accent:       #00b4d8;
+    out property <color> warn:         #f4a44a;
+    out property <color> danger:       #e05c5c;
     out property <color> text-primary: #d0e8ff;
     out property <color> text-label:   #3e6ea0;
     out property <color> text-dim:     #2a4060;
