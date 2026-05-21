@@ -1,5 +1,7 @@
 use sysinfo::{Components, Disks, Networks, System};
 
+use crate::format::{fmt_bytes, fmt_load_avg, fmt_uptime};
+
 pub struct SystemMetrics {
     pub hostname:  String,
     pub ip_addr:   String,
@@ -92,20 +94,12 @@ fn ip_addr(networks: &Networks) -> String {
 }
 
 fn uptime() -> String {
-    let secs = System::uptime();
-    let days = secs / 86400;
-    let hours = (secs % 86400) / 3600;
-    let mins = (secs % 3600) / 60;
-    if days > 0 {
-        format!("{}d {}h {:02}m", days, hours, mins)
-    } else {
-        format!("{}h {:02}m", hours, mins)
-    }
+    fmt_uptime(System::uptime())
 }
 
 fn load_avg() -> String {
     let la = System::load_average();
-    format!("{:.2}  {:.2}  {:.2}", la.one, la.five, la.fifteen)
+    fmt_load_avg(la.one, la.five, la.fifteen)
 }
 
 fn cpu_temp_with_pct(components: &Components) -> (String, f32) {
@@ -113,8 +107,7 @@ fn cpu_temp_with_pct(components: &Components) -> (String, f32) {
         let label = comp.label().to_lowercase();
         if label.contains("cpu") || label.contains("core") || label.contains("package") {
             if let Some(t) = comp.temperature() {
-                // Pi 3 throttles at 80°C; normalize to that range
-                return (format!("{:.1} °C", t), (t / 80.0).clamp(0.0, 1.0));
+                return (format!("{:.1} °C", t), temp_to_pct(t));
             }
         }
     }
@@ -122,28 +115,28 @@ fn cpu_temp_with_pct(components: &Components) -> (String, f32) {
     if let Ok(raw) = std::fs::read_to_string("/sys/class/thermal/thermal_zone0/temp") {
         if let Ok(millideg) = raw.trim().parse::<u32>() {
             let t = millideg as f32 / 1000.0;
-            return (format!("{:.1} °C", t), (t / 80.0).clamp(0.0, 1.0));
+            return (format!("{:.1} °C", t), temp_to_pct(t));
         }
     }
     ("—".to_string(), 0.0)
 }
 
-fn format_bytes(bytes: u64) -> String {
-    if bytes >= 1_073_741_824 {
-        format!("{:.1} GB", bytes as f64 / 1_073_741_824.0)
-    } else {
-        format!("{:.0} MB", bytes as f64 / 1_048_576.0)
-    }
+// Pi 3 throttles at 80°C; normalize temperature to that range.
+fn temp_to_pct(temp_c: f32) -> f32 {
+    (temp_c / 80.0).clamp(0.0, 1.0)
 }
 
 fn ram(sys: &System) -> String {
-    format!("{} / {}", format_bytes(sys.used_memory()), format_bytes(sys.total_memory()))
+    format!("{} / {}", fmt_bytes(sys.used_memory()), fmt_bytes(sys.total_memory()))
 }
 
 fn ram_pct(sys: &System) -> f32 {
-    let total = sys.total_memory();
+    ram_pct_from(sys.used_memory(), sys.total_memory())
+}
+
+fn ram_pct_from(used: u64, total: u64) -> f32 {
     if total == 0 { return 0.0; }
-    sys.used_memory() as f32 / total as f32
+    used as f32 / total as f32
 }
 
 fn disk(disks: &Disks) -> String {
@@ -153,7 +146,7 @@ fn disk(disks: &Disks) -> String {
     match found {
         Some(d) => {
             let used = d.total_space().saturating_sub(d.available_space());
-            format!("{} / {}", format_bytes(used), format_bytes(d.total_space()))
+            format!("{} / {}", fmt_bytes(used), fmt_bytes(d.total_space()))
         }
         None => "—".to_string(),
     }
@@ -164,12 +157,17 @@ fn disk_pct(disks: &Disks) -> f32 {
     let found = disks.iter().find(|d| d.mount_point() == target)
         .or_else(|| disks.iter().next());
     match found {
-        Some(d) if d.total_space() > 0 => {
-            let used = d.total_space().saturating_sub(d.available_space());
-            used as f32 / d.total_space() as f32
-        }
-        _ => 0.0,
+        Some(d) => disk_used_pct(
+            d.total_space().saturating_sub(d.available_space()),
+            d.total_space(),
+        ),
+        None => 0.0,
     }
+}
+
+fn disk_used_pct(used: u64, total: u64) -> f32 {
+    if total == 0 { return 0.0; }
+    used as f32 / total as f32
 }
 
 fn net_rates(networks: &Networks) -> (String, String) {
@@ -181,7 +179,12 @@ fn net_rates(networks: &Networks) -> (String, String) {
         tx_total += data.transmitted();
     }
     // sysinfo returns bytes since last refresh (5s interval)
-    (format_rate(rx_total / 5), format_rate(tx_total / 5))
+    (format_rate(rate_per_sec(rx_total, 5)), format_rate(rate_per_sec(tx_total, 5)))
+}
+
+fn rate_per_sec(bytes: u64, interval_secs: u64) -> u64 {
+    if interval_secs == 0 { return 0; }
+    bytes / interval_secs
 }
 
 fn format_rate(bps: u64) -> String {
@@ -191,5 +194,78 @@ fn format_rate(bps: u64) -> String {
         format!("{:.0} KB/s", bps as f64 / 1024.0)
     } else {
         format!("{} B/s", bps)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn format_rate_uses_bytes_below_1024() {
+        assert_eq!(format_rate(0), "0 B/s");
+        assert_eq!(format_rate(999), "999 B/s");
+        assert_eq!(format_rate(1023), "1023 B/s");
+    }
+
+    #[test]
+    fn format_rate_crosses_to_kb_at_1024() {
+        assert_eq!(format_rate(1024), "1 KB/s");
+        assert_eq!(format_rate(1_048_575), "1024 KB/s");
+    }
+
+    #[test]
+    fn format_rate_crosses_to_mb_at_1_mib() {
+        assert_eq!(format_rate(1_048_576), "1.0 MB/s");
+        assert_eq!(format_rate(10_485_760), "10.0 MB/s");
+    }
+
+    #[test]
+    fn ram_pct_from_handles_zero_total() {
+        assert_eq!(ram_pct_from(0, 0), 0.0);
+        assert_eq!(ram_pct_from(100, 0), 0.0);
+    }
+
+    #[test]
+    fn ram_pct_from_returns_used_over_total() {
+        assert!((ram_pct_from(50, 100) - 0.5).abs() < f32::EPSILON);
+        assert!((ram_pct_from(100, 100) - 1.0).abs() < f32::EPSILON);
+        assert!((ram_pct_from(0, 100) - 0.0).abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn disk_used_pct_handles_zero_total() {
+        assert_eq!(disk_used_pct(0, 0), 0.0);
+        assert_eq!(disk_used_pct(50, 0), 0.0);
+    }
+
+    #[test]
+    fn disk_used_pct_returns_used_over_total() {
+        assert!((disk_used_pct(250, 1000) - 0.25).abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn temp_to_pct_normalizes_against_80c() {
+        assert_eq!(temp_to_pct(0.0), 0.0);
+        assert!((temp_to_pct(40.0) - 0.5).abs() < f32::EPSILON);
+        assert_eq!(temp_to_pct(80.0), 1.0);
+    }
+
+    #[test]
+    fn temp_to_pct_clamps_out_of_range() {
+        assert_eq!(temp_to_pct(100.0), 1.0);
+        assert_eq!(temp_to_pct(-5.0), 0.0);
+    }
+
+    #[test]
+    fn rate_per_sec_divides_evenly() {
+        assert_eq!(rate_per_sec(0, 5), 0);
+        assert_eq!(rate_per_sec(5_120, 5), 1024);
+        assert_eq!(rate_per_sec(10_485_760, 5), 2_097_152);
+    }
+
+    #[test]
+    fn rate_per_sec_returns_zero_for_zero_interval() {
+        assert_eq!(rate_per_sec(1000, 0), 0);
     }
 }
