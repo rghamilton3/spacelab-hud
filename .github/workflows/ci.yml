@@ -24,8 +24,9 @@ jobs:
 
       - uses: Swatinem/rust-cache@v2
 
-      - run: cargo check
-      - run: cargo clippy -- -D warnings
+      - run: cargo check --all-targets
+      - run: cargo clippy --all-targets -- -D warnings
+      - run: cargo test --locked
 
   build-pi4:
     name: Build Pi 4 (aarch64, glibc 2.35)

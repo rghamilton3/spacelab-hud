@@ -5,8 +5,9 @@ use std::time::Duration;
 
 use chrono::Local;
 
-mod system_info;
+mod format;
 mod remote_metrics;
+mod system_info;
 
 use system_info::MetricsCollector;
 
