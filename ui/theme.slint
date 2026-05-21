@@ -1,0 +1,20 @@
+export struct SysMetrics {
+    hostname:  string,
+    ip-addr:   string,
+    uptime:    string,
+    load-avg:  string,
+    cpu-usage: string,
+    cpu-temp:  string,
+    ram:       string,
+    disk:      string,
+}
+
+export global Theme {
+    out property <color> bg:           #0a0e14;
+    out property <color> surface:      #0f1828;
+    out property <color> border:       #1e2d4a;
+    out property <color> accent:       #00b4d8;
+    out property <color> text-primary: #d0e8ff;
+    out property <color> text-label:   #3e6ea0;
+    out property <color> text-dim:     #2a4060;
+}

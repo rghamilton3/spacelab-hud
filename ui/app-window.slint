@@ -1,0 +1,20 @@
+import { Theme, SysMetrics } from "theme.slint";
+import { SystemInfoScreen } from "system-info.slint";
+
+export component AppWindow inherits Window {
+    title: "SpaceLab HUD";
+    preferred-width: 720px;
+    preferred-height: 720px;
+    background: Theme.bg;
+
+    // Routing — 0 = SystemInfo, future screens increment
+    in-out property <int> current-page: 0;
+
+    in property <SysMetrics> metrics;
+
+    if current-page == 0: SystemInfoScreen {
+        width: root.width;
+        height: root.height;
+        metrics: root.metrics;
+    }
+}
