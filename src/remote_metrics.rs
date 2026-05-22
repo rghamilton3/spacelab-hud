@@ -10,17 +10,23 @@ const TIMEOUT:      Duration = Duration::from_secs(5);
 // ── Public types ──────────────────────────────────────────────────────
 
 pub struct VpsSnapshot {
+    pub hostname:    String,
+    pub ip_addr:     String,
     pub reachable:   bool,
-    pub cadvisor_up: bool,
     pub uptime:      String,
     pub load_avg:    String,
     pub cpu_usage:   String,
     pub cpu_pct:     f32,
+    pub cpu_temp:    String,
+    pub temp_pct:    f32,
     pub ram:         String,
     pub ram_pct:     f32,
     pub disk:        String,
     pub disk_pct:    f32,
 }
+
+const VPS_HOSTNAME: &str = "spacevps";
+const VPS_IP_ADDR:  &str = "spacevps.tail718406.ts.net";
 
 pub struct RemoteAlert {
     pub name:     String,
@@ -97,17 +103,19 @@ struct AmAnnotations {
 
 impl VpsSnapshot {
     pub fn fetch() -> Self {
-        let reachable   = query("up{job=\"vps-node\"}")     .map(|v| v > 0.5).unwrap_or(false);
-        let cadvisor_up = query("up{job=\"vps-cadvisor\"}") .map(|v| v > 0.5).unwrap_or(false);
+        let reachable = query("up{job=\"vps-node\"}").map(|v| v > 0.5).unwrap_or(false);
 
         if !reachable {
             return Self {
-                reachable:   false,
-                cadvisor_up,
+                hostname:  VPS_HOSTNAME.into(),
+                ip_addr:   VPS_IP_ADDR.into(),
+                reachable: false,
                 uptime:    "—".into(),
                 load_avg:  "—  —  —".into(),
                 cpu_usage: "—".into(),
                 cpu_pct:   0.0,
+                cpu_temp:  "—".into(),
+                temp_pct:  0.0,
                 ram:       "—".into(),
                 ram_pct:   0.0,
                 disk:      "—".into(),
@@ -126,20 +134,28 @@ impl VpsSnapshot {
         let load5      = query(r#"node_load5{job="vps-node"}"#).unwrap_or(0.0);
         let load15     = query(r#"node_load15{job="vps-node"}"#).unwrap_or(0.0);
 
+        // CPU temp via hwmon: not always exposed on virtualized VPS.
+        // Returns avg of any reported temp sensors, or 0.0 if none.
+        let temp_c = query(r#"avg(node_hwmon_temp_celsius{job="vps-node"})"#).unwrap_or(0.0);
+
         let ram_pct  = (1.0 - ram_avail  / ram_total) .clamp(0.0, 1.0) as f32;
         let disk_pct = (1.0 - disk_avail / disk_total).clamp(0.0, 1.0) as f32;
         let cpu_pct  = (cpu_val / 100.0)              .clamp(0.0, 1.0) as f32;
+        let temp_pct = (temp_c / 80.0).clamp(0.0, 1.0) as f32;
 
         let now_ts = SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_secs_f64();
         let uptime_secs = (now_ts - boot_ts).max(0.0) as u64;
 
         Self {
-            reachable:   true,
-            cadvisor_up,
+            hostname:  VPS_HOSTNAME.into(),
+            ip_addr:   VPS_IP_ADDR.into(),
+            reachable: true,
             uptime:    fmt_uptime(uptime_secs),
             load_avg:  format!("{:.2}  {:.2}  {:.2}", load1, load5, load15),
             cpu_usage: format!("{:.1}%", cpu_val),
             cpu_pct,
+            cpu_temp:  if temp_c > 0.0 { format!("{:.1} °C", temp_c) } else { "—".into() },
+            temp_pct,
             ram:       format!("{} / {}", fmt_bytes((ram_total - ram_avail) as u64), fmt_bytes(ram_total as u64)),
             ram_pct,
             disk:      format!("{} / {}", fmt_bytes((disk_total - disk_avail) as u64), fmt_bytes(disk_total as u64)),

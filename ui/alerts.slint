@@ -58,8 +58,16 @@ component AlertRow {
 export component AlertsScreen {
     in property <[HudAlert]> alerts;
     in property <int>        alert-count;
+    in property <int>        alert-worst-severity;
     in property <bool>       show-back:    false;
     in property <bool>       show-forward: false;
+
+    property <int> level: alert-count == 0 ? 0 : alert-worst-severity;
+    property <color> status-color:
+        level == 2 ? Theme.danger : (level == 1 ? Theme.warn : Theme.accent);
+    property <string> status-text:
+        alert-count == 0 ? "NOMINAL"
+        : (level == 2 ? "CRIT" : (level == 1 ? "WARN" : "ACTIVE"));
 
     VerticalLayout {
         padding: 0px;
@@ -85,19 +93,30 @@ export component AlertsScreen {
                         opacity: root.show-back ? 0.8 : 0.0;
                         animate opacity { duration: 200ms; }
                     }
-                    Text {
-                        text: "ALERTS";
-                        color: Theme.accent;
-                        font-size: 17px;
-                        letter-spacing: 3px;
-                        vertical-alignment: center;
+                    HorizontalLayout {
+                        spacing: 0px;
+                        Text {
+                            text: "SPACELAB-1 // ALERTS // ";
+                            color: Theme.accent;
+                            font-size: 17px;
+                            letter-spacing: 3px;
+                            vertical-alignment: center;
+                        }
+                        Text {
+                            text: status-text;
+                            color: status-color;
+                            font-size: 17px;
+                            letter-spacing: 3px;
+                            vertical-alignment: center;
+                            animate color { duration: 500ms; }
+                        }
                     }
                 }
 
                 HorizontalLayout {
                     spacing: 8px;
                     Text {
-                        text: root.alert-count == 0 ? "ALL CLEAR" : (root.alert-count + " ACTIVE");
+                        text: root.alert-count == 0 ? "NOMINAL" : (root.alert-count + " ACTIVE");
                         color: root.alert-count == 0 ? Theme.accent : Theme.danger;
                         font-size: 13px;
                         letter-spacing: 2px;

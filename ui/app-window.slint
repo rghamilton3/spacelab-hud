@@ -1,6 +1,9 @@
-import { Theme, SysMetrics, VpsMetrics, HudAlert } from "theme.slint";
+import { Theme, SysMetrics, ServiceMetrics, HudAlert } from "theme.slint";
+import { OverviewScreen }   from "overview.slint";
 import { SystemInfoScreen } from "system-info.slint";
 import { VpsHealthScreen }  from "vps-health.slint";
+import { NasHealthScreen }  from "nas-health.slint";
+import { HaHealthScreen }   from "ha-health.slint";
 import { AlertsScreen }     from "alerts.slint";
 
 export component AppWindow inherits Window {
@@ -10,36 +13,86 @@ export component AppWindow inherits Window {
     background: Theme.bg;
 
     // ── Screen data ───────────────────────────────────────────────────
-    in property     <SysMetrics> metrics;
-    in property     <string>     clock-str;
-    in-out property <bool>       heartbeat: true;
+    in property     <SysMetrics>     metrics;
+    in property     <string>         clock-str;
+    in property     <bool>           local-network-reachable;
 
-    in property     <VpsMetrics> vps-metrics;
+    in property     <ServiceMetrics> vps-metrics;
+    in property     <ServiceMetrics> nas-metrics;
+    in property     <ServiceMetrics> ha-metrics;
 
-    in property     <[HudAlert]> alerts;
-    in property     <int>        alert-count;
+    in property     <[HudAlert]>     alerts;
+    in property     <int>            alert-count;
+    in property     <int>            alert-worst-severity;
+
+    // ── Overall system status (single source of truth for every header) ─
+    property <float> pi-worst:
+        Math.max(Math.max(metrics.cpu-pct, metrics.temp-pct),
+                 Math.max(metrics.ram-pct, metrics.disk-pct));
+    property <int> pi-level: pi-worst > 0.85 ? 2 : (pi-worst > 0.70 ? 1 : 0);
+
+    property <float> vps-worst:
+        Math.max(Math.max(vps-metrics.cpu-pct, vps-metrics.ram-pct), vps-metrics.disk-pct);
+    property <int> vps-level:
+        !vps-metrics.reachable ? 2
+        : (vps-worst > 0.85 ? 2 : (vps-worst > 0.70 ? 1 : 0));
+
+    property <float> nas-worst:
+        Math.max(Math.max(nas-metrics.cpu-pct, nas-metrics.ram-pct), nas-metrics.disk-pct);
+    property <int> nas-level:
+        !nas-metrics.reachable ? 2
+        : (nas-worst > 0.85 ? 2 : (nas-worst > 0.70 ? 1 : 0));
+
+    property <float> ha-worst:
+        Math.max(Math.max(ha-metrics.cpu-pct, ha-metrics.ram-pct), ha-metrics.disk-pct);
+    property <int> ha-level:
+        !ha-metrics.reachable ? 2
+        : (ha-worst > 0.85 ? 2 : (ha-worst > 0.70 ? 1 : 0));
+
+    property <int> alerts-rollup-level:
+        alert-count == 0 ? 0 : alert-worst-severity;
+
+    property <int> overall-level:
+        Math.max(Math.max(Math.max(pi-level, vps-level),
+                          Math.max(nas-level, ha-level)),
+                 alerts-rollup-level);
+    property <color> overall-color:
+        overall-level == 2 ? Theme.danger
+        : (overall-level == 1 ? Theme.warn : Theme.accent);
+    property <string> overall-status:
+        overall-level == 0 ? "NOMINAL"
+        : (overall-level == 2 ? "CRIT" : "WARN");
 
     // ── Swipe state ───────────────────────────────────────────────────
+    // 6 pages: 0 Overview, 1 VPS, 2 NAS, 3 HA, 4 HUD, 5 Alerts
+    property        <int>    page-count:     6;
     in-out property <int>    current-page:   0;
     property        <int>    committed-page: 0;
     property        <length> drag-offset:    0px;
     property        <bool>   is-dragging:    false;
 
-    // ── Screens container (full height) ──────────────────────────────
+    // ── Screens container ────────────────────────────────────────────
     screens-rect := Rectangle {
         y: 0;
-        width: 3 * root.width;
+        width: root.page-count * root.width;
         height: root.height;
 
-        SystemInfoScreen {
+        OverviewScreen {
             x: 0 * root.width;
             width: root.width;
             height: parent.height;
-            metrics:      root.metrics;
-            clock-str:    root.clock-str;
-            heartbeat:    root.heartbeat;
-            show-back:    false;
-            show-forward: root.current-page < 2;
+            metrics:              root.metrics;
+            vps-metrics:          root.vps-metrics;
+            nas-metrics:          root.nas-metrics;
+            ha-metrics:           root.ha-metrics;
+            alerts:               root.alerts;
+            alert-count:          root.alert-count;
+            alert-worst-severity: root.alert-worst-severity;
+            clock-str:            root.clock-str;
+            overall-status:       root.overall-status;
+            overall-color:        root.overall-color;
+            show-back:            false;
+            show-forward:         true;
         }
 
         VpsHealthScreen {
@@ -47,18 +100,47 @@ export component AppWindow inherits Window {
             width: root.width;
             height: parent.height;
             metrics:      root.vps-metrics;
-            show-back:    root.current-page > 0;
-            show-forward: root.current-page < 2;
+            show-back:    true;
+            show-forward: true;
         }
 
-        AlertsScreen {
+        NasHealthScreen {
             x: 2 * root.width;
             width: root.width;
             height: parent.height;
-            alerts:       root.alerts;
-            alert-count:  root.alert-count;
+            metrics:      root.nas-metrics;
             show-back:    true;
-            show-forward: false;
+            show-forward: true;
+        }
+
+        HaHealthScreen {
+            x: 3 * root.width;
+            width: root.width;
+            height: parent.height;
+            metrics:      root.ha-metrics;
+            show-back:    true;
+            show-forward: true;
+        }
+
+        SystemInfoScreen {
+            x: 4 * root.width;
+            width: root.width;
+            height: parent.height;
+            metrics:           root.metrics;
+            network-reachable: root.local-network-reachable;
+            show-back:         true;
+            show-forward:      true;
+        }
+
+        AlertsScreen {
+            x: 5 * root.width;
+            width: root.width;
+            height: parent.height;
+            alerts:               root.alerts;
+            alert-count:          root.alert-count;
+            alert-worst-severity: root.alert-worst-severity;
+            show-back:            true;
+            show-forward:         false;
         }
 
         states [
@@ -80,6 +162,7 @@ export component AppWindow inherits Window {
         height: root.height;
 
         property <length> press-x;
+        property <int>    max-page: root.page-count - 1;
 
         pointer-event(e) => {
             if e.kind == PointerEventKind.down {
@@ -92,13 +175,12 @@ export component AppWindow inherits Window {
                 let abs-delta = delta < 0px ? -delta : delta;
 
                 if abs-delta < 20px {
-                    // Tap: check edge zones for arrow navigation
                     if self.mouse-x < 80px && root.current-page > 0 {
                         root.current-page -= 1;
-                    } else if self.mouse-x > root.width - 80px && root.current-page < 2 {
+                    } else if self.mouse-x > root.width - 80px && root.current-page < max-page {
                         root.current-page += 1;
                     }
-                } else if delta < -60px && root.current-page < 2 {
+                } else if delta < -60px && root.current-page < max-page {
                     root.current-page += 1;
                 } else if delta > 60px && root.current-page > 0 {
                     root.current-page -= 1;
@@ -112,7 +194,7 @@ export component AppWindow inherits Window {
                 let raw = self.mouse-x - press-x;
                 if root.committed-page == 0 && raw > 0px {
                     root.drag-offset = raw * 0.3;
-                } else if root.committed-page == 2 && raw < 0px {
+                } else if root.committed-page == max-page && raw < 0px {
                     root.drag-offset = raw * 0.3;
                 } else {
                     root.drag-offset = raw;
