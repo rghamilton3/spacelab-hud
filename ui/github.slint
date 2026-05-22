@@ -23,32 +23,34 @@ component RepoCard {
 
             VerticalLayout {
                 padding: 12px;
-                spacing: 5px;
+                spacing: 8px;
+                alignment: center;
 
                 Text {
                     text: root.repo.name;
-                    color: Theme.text-primary;
-                    font-size: 14px;
+                    color: Theme.accent;
+                    font-size: 20px;
                     font-family: "monospace";
                     overflow: elide;
                 }
 
                 HorizontalLayout {
-                    spacing: 16px;
+                    spacing: 20px;
 
                     HorizontalLayout {
                         spacing: 6px;
+                        alignment: center;
                         Text {
                             text: root.repo.pr-count;
                             color: Theme.text-primary;
-                            font-size: 20px;
+                            font-size: 22px;
                             font-family: "monospace";
                             vertical-alignment: center;
                         }
                         Text {
                             text: "PR";
                             color: Theme.text-label;
-                            font-size: 11px;
+                            font-size: 13px;
                             letter-spacing: 2px;
                             vertical-alignment: center;
                         }
@@ -56,17 +58,18 @@ component RepoCard {
 
                     HorizontalLayout {
                         spacing: 6px;
+                        alignment: center;
                         Text {
                             text: root.repo.issue-count;
                             color: Theme.text-primary;
-                            font-size: 20px;
+                            font-size: 22px;
                             font-family: "monospace";
                             vertical-alignment: center;
                         }
                         Text {
                             text: "ISS";
                             color: Theme.text-label;
-                            font-size: 11px;
+                            font-size: 13px;
                             letter-spacing: 2px;
                             vertical-alignment: center;
                         }
@@ -78,8 +81,8 @@ component RepoCard {
                         VerticalLayout {
                             alignment: center;
                             Rectangle {
-                                width: 7px;
-                                height: 7px;
+                                width: 8px;
+                                height: 8px;
                                 border-radius: 4px;
                                 background: ci-color;
                                 animate background { duration: 500ms; }
@@ -88,7 +91,7 @@ component RepoCard {
                         Text {
                             text: root.repo.ci-status;
                             color: ci-color;
-                            font-size: 12px;
+                            font-size: 14px;
                             letter-spacing: 1px;
                             vertical-alignment: center;
                             animate color { duration: 500ms; }
@@ -132,14 +135,14 @@ component EventRow {
                 Text {
                     text: root.event.kind;
                     color: ev-color;
-                    font-size: 10px;
+                    font-size: 12px;
                     letter-spacing: 2px;
                     vertical-alignment: center;
                 }
                 Text {
                     text: root.event.repo;
                     color: Theme.text-label;
-                    font-size: 10px;
+                    font-size: 12px;
                     letter-spacing: 1px;
                     vertical-alignment: center;
                     overflow: elide;
@@ -148,14 +151,14 @@ component EventRow {
                 Text {
                     text: root.event.age;
                     color: Theme.text-dim;
-                    font-size: 10px;
+                    font-size: 12px;
                     vertical-alignment: center;
                 }
             }
             Text {
                 text: root.event.title;
                 color: Theme.text-primary;
-                font-size: 12px;
+                font-size: 14px;
                 overflow: elide;
             }
         }
@@ -230,7 +233,7 @@ export component GithubScreen {
                             ? (root.reachable ? "ONLINE" : "OFFLINE")
                             : "NOT SET";
                         color: root.configured && !root.reachable ? Theme.danger : Theme.text-label;
-                        font-size: 11px;
+                        font-size: 13px;
                         letter-spacing: 2px;
                         vertical-alignment: center;
                     }
@@ -301,6 +304,7 @@ export component GithubScreen {
         if root.configured && root.reachable: VerticalLayout {
             padding: 10px;
             spacing: 7px;
+            alignment: start;
 
             // Recent events (shown only when non-empty)
             if root.events.length > 0: Rectangle {
@@ -316,7 +320,7 @@ export component GithubScreen {
                         Text {
                             text: "RECENT ACTIVITY";
                             color: Theme.text-label;
-                            font-size: 10px;
+                            font-size: 12px;
                             letter-spacing: 3px;
                         }
                     }

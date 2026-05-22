@@ -49,7 +49,7 @@ component StoplightRow {
                 Text {
                     text: root.name;
                     color: Theme.text-label;
-                    font-size: 12px;
+                    font-size: 13px;
                     letter-spacing: 3px;
                 }
                 Text {
@@ -62,13 +62,13 @@ component StoplightRow {
                 Text {
                     text: root.detail;
                     color: Theme.text-primary;
-                    font-size: 13px;
+                    font-size: 15px;
                     font-family: "monospace";
                 }
                 Text {
                     text: root.sub;
                     color: Theme.text-dim;
-                    font-size: 11px;
+                    font-size: 13px;
                     font-family: "monospace";
                 }
             }
@@ -136,7 +136,7 @@ component StoplightCard {
                 Text {
                     text: root.detail;
                     color: Theme.text-primary;
-                    font-size: 12px;
+                    font-size: 14px;
                     font-family: "monospace";
                     wrap: word-wrap;
                 }
@@ -323,7 +323,7 @@ export component OverviewScreen {
                     horizontal-stretch: 1;
                     name:     "GITHUB";
                     level:    github-level;
-                    headline: github-level == 0 ? "OK"
+                    headline: github-level == 0 ? "NOMINAL"
                               : (github-level == 2 ? "FAIL" : "WARN");
                     detail:   github-pr-count + " PR\n"
                               + github-issue-count + " ISS";

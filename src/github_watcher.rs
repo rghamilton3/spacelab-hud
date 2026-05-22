@@ -449,7 +449,7 @@ fn push_github_state(
         let status   = match level {
             2 => "FAILING",
             1 => "WARN",
-            _ => "OK",
+            _ => "NOMINAL",
         }.to_string();
 
         ui.set_github_repos(slint::ModelRc::new(slint::VecModel::from(repos)));
