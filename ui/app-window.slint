@@ -108,7 +108,7 @@ export component AppWindow inherits Window {
             github-level:         root.github-level;
             github-pr-count:      root.github-pr-count;
             github-issue-count:   root.github-issue-count;
-            show-back:            false;
+            show-back:            true;
             show-forward:         true;
         }
 
@@ -174,7 +174,7 @@ export component AppWindow inherits Window {
             alert-worst-severity: root.alert-worst-severity;
             alerts-reachable:     root.alerts-reachable;
             show-back:            true;
-            show-forward:         false;
+            show-forward:         true;
         }
 
         states [
@@ -205,19 +205,47 @@ export component AppWindow inherits Window {
                 root.drag-offset    = 0px;
                 root.is-dragging    = true;
             } else if e.kind == PointerEventKind.up || e.kind == PointerEventKind.cancel {
-                let delta = self.mouse-x - press-x;
+                let delta     = self.mouse-x - press-x;
                 let abs-delta = delta < 0px ? -delta : delta;
 
                 if abs-delta < 20px {
-                    if self.mouse-x < 80px && root.current-page > 0 {
-                        root.current-page -= 1;
-                    } else if self.mouse-x > root.width - 80px && root.current-page < max-page {
-                        root.current-page += 1;
+                    if root.current-page == 0 {
+                        // Overview: header edge-tap or card-tap navigation
+                        // Layout constants mirror overview.slint (header 56px + 1px border,
+                        // inner padding 10px, row gap 7px, three equal-height rows).
+                        let header = 57px;
+                        let pad    = 10px;
+                        let gap    = 7px;
+                        let rowh   = (root.height - header - 2 * pad - 2 * gap) / 3;
+                        let r1-bot = header + pad + rowh;
+                        let r2-bot = r1-bot + gap + rowh;
+
+                        if self.mouse-y < header {
+                            if self.mouse-x > root.width - 80px {
+                                root.current-page = 1;
+                            }
+                        } else if self.mouse-y < r1-bot {
+                            // Row 1: LOCAL (page 5) | VPS (page 2)
+                            root.current-page = self.mouse-x < root.width / 2 ? 5 : 2;
+                        } else if self.mouse-y < r2-bot {
+                            // Row 2: NAS (page 3) | HA (page 4) | GITHUB (page 1)
+                            root.current-page = self.mouse-x < root.width / 3 ? 3
+                                              : (self.mouse-x < 2 * root.width / 3 ? 4 : 1);
+                        } else {
+                            // ALERTS row (page 6)
+                            root.current-page = 6;
+                        }
+                    } else {
+                        if self.mouse-x < 80px {
+                            root.current-page = root.current-page > 0 ? root.current-page - 1 : max-page;
+                        } else if self.mouse-x > root.width - 80px {
+                            root.current-page = root.current-page < max-page ? root.current-page + 1 : 0;
+                        }
                     }
-                } else if delta < -60px && root.current-page < max-page {
-                    root.current-page += 1;
-                } else if delta > 60px && root.current-page > 0 {
-                    root.current-page -= 1;
+                } else if delta < -60px {
+                    root.current-page = root.current-page < max-page ? root.current-page + 1 : 0;
+                } else if delta > 60px {
+                    root.current-page = root.current-page > 0 ? root.current-page - 1 : max-page;
                 }
                 root.is-dragging = false;
             }
