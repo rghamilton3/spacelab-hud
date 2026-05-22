@@ -20,7 +20,7 @@ impl Default for AppConfig {
             github_username:  String::new(),
             github_repos:     vec![],
             github_poll_secs: 60,
-            web_config_port:  8765,
+            web_config_port:  80,
         }
     }
 }
