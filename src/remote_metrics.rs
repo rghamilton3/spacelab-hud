@@ -85,7 +85,7 @@ fn get_or_refresh_token() -> Option<String> {
         BESZEL_HOST
     ))
     .timeout(TIMEOUT)
-    .send_json(&serde_json::json!({ "identity": email, "password": password }))
+    .send_json(serde_json::json!({ "identity": email, "password": password }))
     .ok()?;
 
     let body: AuthResp = resp.into_json().ok()?;
