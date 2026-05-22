@@ -4894,7 +4894,7 @@ dependencies = [
 
 [[package]]
 name = "spacelab-hub"
-version = "0.3.1"
+version = "0.5.0"
 dependencies = [
  "anyhow",
  "axum",
