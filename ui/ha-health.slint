@@ -1,7 +1,7 @@
 import { Theme, ServiceMetrics } from "theme.slint";
 import { MetricCard, MetricBarCard } from "system-info.slint";
 
-export component VpsHealthScreen {
+export component HaHealthScreen {
     in property <ServiceMetrics> metrics;
     in property <bool>           show-back:    false;
     in property <bool>           show-forward: false;
@@ -21,7 +21,6 @@ export component VpsHealthScreen {
         padding: 0px;
         spacing: 0px;
 
-        // ── Header ──────────────────────────────────────────────────
         Rectangle {
             height: 56px;
             background: Theme.surface;
@@ -44,7 +43,7 @@ export component VpsHealthScreen {
                     HorizontalLayout {
                         spacing: 0px;
                         Text {
-                            text: "SPACELAB-1 // VPS // ";
+                            text: "SPACELAB-1 // HA // ";
                             color: Theme.accent;
                             font-size: 17px;
                             letter-spacing: 3px;
@@ -96,7 +95,6 @@ export component VpsHealthScreen {
 
         Rectangle { height: 1px; background: Theme.border; }
 
-        // ── 4×2 metric grid (matches HUD) ────────────────────────────
         GridLayout {
             padding: 10px;
             spacing: 7px;

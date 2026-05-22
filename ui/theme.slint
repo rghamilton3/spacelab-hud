@@ -15,13 +15,16 @@ export struct SysMetrics {
     net-tx:    string,
 }
 
-export struct VpsMetrics {
+export struct ServiceMetrics {
+    hostname:    string,
+    ip-addr:     string,
     reachable:   bool,
-    cadvisor-up: bool,
     uptime:      string,
     load-avg:    string,
     cpu-usage:   string,
     cpu-pct:     float,
+    cpu-temp:    string,
+    temp-pct:    float,
     ram:         string,
     ram-pct:     float,
     disk:        string,
@@ -40,6 +43,7 @@ export global Theme {
     out property <color> surface:      #0f1828;
     out property <color> border:       #1e2d4a;
     out property <color> accent:       #00b4d8;
+    out property <color> success:      #4ade80;
     out property <color> warn:         #f4a44a;
     out property <color> danger:       #e05c5c;
     out property <color> text-primary: #d0e8ff;

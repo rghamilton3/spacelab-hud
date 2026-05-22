@@ -1,0 +1,326 @@
+import { Theme, SysMetrics, ServiceMetrics, HudAlert } from "theme.slint";
+
+// ── Stoplight row (used for full-width ALERTS row) ──────────────────
+component StoplightRow {
+    in property <string> name;
+    in property <int>    level;
+    in property <string> headline;
+    in property <string> detail;
+    in property <string> sub;
+
+    property <color> state-color: root.level == 2 ? Theme.danger
+                                 : (root.level == 1 ? Theme.warn : Theme.accent);
+
+    Rectangle {
+        background: Theme.surface;
+        border-radius: 8px;
+        clip: true;
+
+        HorizontalLayout {
+            spacing: 0px;
+
+            Rectangle {
+                width: 8px;
+                background: state-color;
+                animate background { duration: 500ms; easing: ease-in-out; }
+            }
+
+            VerticalLayout {
+                alignment: center;
+                padding-left: 16px;
+                padding-right: 12px;
+                Rectangle {
+                    width: 28px;
+                    height: 28px;
+                    border-radius: 14px;
+                    background: state-color;
+                    animate background { duration: 500ms; easing: ease-in-out; }
+                }
+            }
+
+            VerticalLayout {
+                padding-top: 14px;
+                padding-bottom: 14px;
+                padding-right: 16px;
+                spacing: 3px;
+                alignment: center;
+
+                Text {
+                    text: root.name;
+                    color: Theme.text-label;
+                    font-size: 12px;
+                    letter-spacing: 3px;
+                }
+                Text {
+                    text: root.headline;
+                    color: state-color;
+                    font-size: 32px;
+                    font-family: "monospace";
+                    animate color { duration: 500ms; easing: ease-in-out; }
+                }
+                Text {
+                    text: root.detail;
+                    color: Theme.text-primary;
+                    font-size: 13px;
+                    font-family: "monospace";
+                }
+                Text {
+                    text: root.sub;
+                    color: Theme.text-dim;
+                    font-size: 11px;
+                    font-family: "monospace";
+                }
+            }
+        }
+    }
+}
+
+// ── Square stoplight tile (used for the 2×2 grid) ───────────────────
+component StoplightCard {
+    in property <string> name;
+    in property <int>    level;
+    in property <string> headline;
+    in property <string> detail;
+
+    property <color> state-color: root.level == 2 ? Theme.danger
+                                 : (root.level == 1 ? Theme.warn : Theme.accent);
+
+    Rectangle {
+        background: Theme.surface;
+        border-radius: 8px;
+        clip: true;
+
+        VerticalLayout {
+            spacing: 0px;
+
+            Rectangle {
+                height: 6px;
+                background: state-color;
+                animate background { duration: 500ms; }
+            }
+
+            VerticalLayout {
+                padding: 14px;
+                spacing: 8px;
+                alignment: center;
+
+                HorizontalLayout {
+                    spacing: 10px;
+                    alignment: start;
+                    VerticalLayout {
+                        alignment: center;
+                        Rectangle {
+                            width: 22px;
+                            height: 22px;
+                            border-radius: 11px;
+                            background: state-color;
+                            animate background { duration: 500ms; }
+                        }
+                    }
+                    Text {
+                        text: root.name;
+                        color: Theme.text-label;
+                        font-size: 12px;
+                        letter-spacing: 3px;
+                        vertical-alignment: center;
+                    }
+                }
+                Text {
+                    text: root.headline;
+                    color: state-color;
+                    font-size: 26px;
+                    font-family: "monospace";
+                    animate color { duration: 500ms; }
+                }
+                Text {
+                    text: root.detail;
+                    color: Theme.text-primary;
+                    font-size: 12px;
+                    font-family: "monospace";
+                    wrap: word-wrap;
+                }
+            }
+        }
+    }
+}
+
+export component OverviewScreen {
+    in property <SysMetrics>     metrics;
+    in property <ServiceMetrics> vps-metrics;
+    in property <ServiceMetrics> nas-metrics;
+    in property <ServiceMetrics> ha-metrics;
+    in property <[HudAlert]>     alerts;
+    in property <int>            alert-count;
+    in property <int>            alert-worst-severity;
+    in property <string>         clock-str;
+    in property <string>         overall-status;
+    in property <color>          overall-color;
+    in property <bool>           show-back:    false;
+    in property <bool>           show-forward: false;
+
+    // ── LOCAL derived state ──────────────────────────────────────────
+    property <float> pi-worst:
+        Math.max(Math.max(metrics.cpu-pct, metrics.temp-pct),
+                 Math.max(metrics.ram-pct, metrics.disk-pct));
+    property <int> pi-level: pi-worst > 0.85 ? 2 : (pi-worst > 0.70 ? 1 : 0);
+
+    // ── VPS derived state ────────────────────────────────────────────
+    property <float> vps-worst:
+        Math.max(Math.max(vps-metrics.cpu-pct, vps-metrics.temp-pct),
+                 Math.max(vps-metrics.ram-pct,  vps-metrics.disk-pct));
+    property <int> vps-level:
+        !vps-metrics.reachable ? 2
+        : (vps-worst > 0.85 ? 2 : (vps-worst > 0.70 ? 1 : 0));
+
+    // ── NAS derived state ────────────────────────────────────────────
+    property <float> nas-worst:
+        Math.max(Math.max(nas-metrics.cpu-pct, nas-metrics.temp-pct),
+                 Math.max(nas-metrics.ram-pct,  nas-metrics.disk-pct));
+    property <int> nas-level:
+        !nas-metrics.reachable ? 2
+        : (nas-worst > 0.85 ? 2 : (nas-worst > 0.70 ? 1 : 0));
+
+    // ── HA derived state ─────────────────────────────────────────────
+    property <float> ha-worst:
+        Math.max(Math.max(ha-metrics.cpu-pct, ha-metrics.temp-pct),
+                 Math.max(ha-metrics.ram-pct,  ha-metrics.disk-pct));
+    property <int> ha-level:
+        !ha-metrics.reachable ? 2
+        : (ha-worst > 0.85 ? 2 : (ha-worst > 0.70 ? 1 : 0));
+
+    // ── Alerts ───────────────────────────────────────────────────────
+    property <int> alerts-level: alert-count == 0 ? 0 : alert-worst-severity;
+
+    VerticalLayout {
+        padding: 0px;
+        spacing: 0px;
+
+        // ── Header (matches SystemInfoScreen) ────────────────────────
+        Rectangle {
+            height: 56px;
+            background: Theme.surface;
+
+            HorizontalLayout {
+                padding-left: 14px;
+                padding-right: 14px;
+                alignment: space-between;
+
+                HorizontalLayout {
+                    spacing: 8px;
+                    Text {
+                        text: "‹";
+                        color: Theme.text-label;
+                        font-size: 28px;
+                        vertical-alignment: center;
+                        opacity: root.show-back ? 0.8 : 0.0;
+                        animate opacity { duration: 200ms; }
+                    }
+                    HorizontalLayout {
+                        spacing: 0px;
+                        Text {
+                            text: "SPACELAB-1 // OVERVIEW // ";
+                            color: Theme.accent;
+                            font-size: 17px;
+                            letter-spacing: 3px;
+                            vertical-alignment: center;
+                        }
+                        Text {
+                            text: overall-status;
+                            color: overall-color;
+                            font-size: 17px;
+                            letter-spacing: 3px;
+                            vertical-alignment: center;
+                            animate color { duration: 500ms; }
+                        }
+                    }
+                }
+
+                HorizontalLayout {
+                    spacing: 8px;
+                    Text {
+                        text: root.clock-str;
+                        color: Theme.text-primary;
+                        font-size: 18px;
+                        font-family: "monospace";
+                        vertical-alignment: center;
+                    }
+                    Text {
+                        text: "›";
+                        color: Theme.text-label;
+                        font-size: 28px;
+                        vertical-alignment: center;
+                        opacity: root.show-forward ? 0.8 : 0.0;
+                        animate opacity { duration: 200ms; }
+                    }
+                }
+            }
+        }
+
+        Rectangle { height: 1px; background: Theme.border; }
+
+        // ── 2×2 grid + full-width alerts row ─────────────────────────
+        VerticalLayout {
+            padding: 10px;
+            spacing: 7px;
+
+            // GridLayout guarantees the four cells are equal width AND
+            // equal height regardless of content.
+            GridLayout {
+                spacing: 7px;
+                vertical-stretch: 2;
+
+                Row {
+                    StoplightCard {
+                        name:     "LOCAL";
+                        level:    pi-level;
+                        headline: pi-level == 0 ? "NOMINAL" : (pi-level == 2 ? "CRIT" : "WARN");
+                        detail:   "CPU "  + metrics.cpu-usage
+                                  + "\nTMP " + metrics.cpu-temp
+                                  + "\nRAM " + Math.round(metrics.ram-pct * 100) + "%"
+                                  + "\nDSK " + Math.round(metrics.disk-pct * 100) + "%";
+                    }
+                    StoplightCard {
+                        name:     "VPS";
+                        level:    vps-level;
+                        headline: vps-level == 0 ? "NOMINAL" : (vps-level == 2 ? "CRIT" : "WARN");
+                        detail:   !vps-metrics.reachable ? "unreachable"
+                                  : "CPU "  + vps-metrics.cpu-usage
+                                    + "\nRAM " + Math.round(vps-metrics.ram-pct * 100) + "%"
+                                    + "\nDSK " + Math.round(vps-metrics.disk-pct * 100) + "%";
+                    }
+                }
+                Row {
+                    StoplightCard {
+                        name:     "NAS";
+                        level:    nas-level;
+                        headline: nas-level == 0 ? "NOMINAL" : (nas-level == 2 ? "CRIT" : "WARN");
+                        detail:   !nas-metrics.reachable ? "unreachable"
+                                  : "CPU "  + nas-metrics.cpu-usage
+                                    + "\nRAM " + Math.round(nas-metrics.ram-pct * 100) + "%"
+                                    + "\nDSK " + Math.round(nas-metrics.disk-pct * 100) + "%";
+                    }
+                    StoplightCard {
+                        name:     "HA";
+                        level:    ha-level;
+                        headline: ha-level == 0 ? "NOMINAL" : (ha-level == 2 ? "CRIT" : "WARN");
+                        detail:   !ha-metrics.reachable ? "unreachable"
+                                  : "CPU "  + ha-metrics.cpu-usage
+                                    + "\nRAM " + Math.round(ha-metrics.ram-pct * 100) + "%"
+                                    + "\nDSK " + Math.round(ha-metrics.disk-pct * 100) + "%";
+                    }
+                }
+            }
+
+            StoplightRow {
+                vertical-stretch: 1;
+                name:     "ALERTS";
+                level:    alerts-level;
+                headline: alert-count == 0 ? "NOMINAL"
+                          : alert-count + (alerts-level == 2 ? " CRITICAL"
+                                         : alerts-level == 1 ? " WARNING" : " ACTIVE");
+                detail:   alert-count == 0 ? "0 active" : alerts[0].name + "  " + alerts[0].age;
+                sub:      alert-count == 0 ? "" : alerts[0].summary;
+            }
+        }
+    }
+}

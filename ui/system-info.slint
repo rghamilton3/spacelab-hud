@@ -49,7 +49,6 @@ export component MetricBarCard {
         HorizontalLayout {
             spacing: 0px;
 
-            // Accent left-border that shifts color with threshold
             Rectangle {
                 width: 3px;
                 background: bar-color;
@@ -79,13 +78,11 @@ export component MetricBarCard {
                     }
                 }
 
-                // Track
                 Rectangle {
                     height: 5px;
                     background: Theme.text-dim;
                     border-radius: 3px;
 
-                    // Fill
                     Rectangle {
                         x: 0;
                         width: parent.width * root.pct;
@@ -103,10 +100,18 @@ export component MetricBarCard {
 
 export component SystemInfoScreen {
     in property <SysMetrics> metrics;
-    in property <string>     clock-str;
-    in property <bool>       heartbeat;
+    in property <bool>       network-reachable;
     in property <bool>       show-back:    false;
     in property <bool>       show-forward: false;
+
+    property <float> pi-worst:
+        Math.max(Math.max(metrics.cpu-pct, metrics.temp-pct),
+                 Math.max(metrics.ram-pct, metrics.disk-pct));
+    property <int> level: pi-worst > 0.85 ? 2 : (pi-worst > 0.70 ? 1 : 0);
+    property <color> status-color:
+        level == 2 ? Theme.danger : (level == 1 ? Theme.warn : Theme.accent);
+    property <string> status-text:
+        level == 0 ? "NOMINAL" : (level == 2 ? "CRIT" : "WARN");
 
     VerticalLayout {
         padding: 0px;
@@ -132,23 +137,46 @@ export component SystemInfoScreen {
                         opacity: root.show-back ? 0.8 : 0.0;
                         animate opacity { duration: 200ms; }
                     }
-                    Text {
-                        text: "SPACELAB-1 STATUS CONSOLE";
-                        color: Theme.accent;
-                        font-size: 17px;
-                        letter-spacing: 3px;
-                        vertical-alignment: center;
+                    HorizontalLayout {
+                        spacing: 0px;
+                        Text {
+                            text: "SPACELAB-1 // HUD // ";
+                            color: Theme.accent;
+                            font-size: 17px;
+                            letter-spacing: 3px;
+                            vertical-alignment: center;
+                        }
+                        Text {
+                            text: status-text;
+                            color: status-color;
+                            font-size: 17px;
+                            letter-spacing: 3px;
+                            vertical-alignment: center;
+                            animate color { duration: 500ms; }
+                        }
                     }
                 }
 
                 HorizontalLayout {
                     spacing: 8px;
+                    alignment: center;
+                    VerticalLayout {
+                        alignment: center;
+                        Rectangle {
+                            width: 8px;
+                            height: 8px;
+                            border-radius: 4px;
+                            background: root.network-reachable ? Theme.success : Theme.danger;
+                            animate background { duration: 400ms; }
+                        }
+                    }
                     Text {
-                        text: root.clock-str;
-                        color: Theme.text-primary;
-                        font-size: 18px;
-                        font-family: "monospace";
+                        text: root.network-reachable ? "ONLINE" : "OFFLINE";
+                        color: root.network-reachable ? Theme.text-label : Theme.danger;
+                        font-size: 11px;
+                        letter-spacing: 2px;
                         vertical-alignment: center;
+                        animate color { duration: 400ms; }
                     }
                     Text {
                         text: "›";
@@ -164,7 +192,7 @@ export component SystemInfoScreen {
 
         Rectangle { height: 1px; background: Theme.border; }
 
-        // ── Metric grid ─────────────────────────────────────────────
+        // ── Metric grid (equal cols via GridLayout) ──────────────────
         GridLayout {
             padding: 10px;
             spacing: 7px;
@@ -207,60 +235,6 @@ export component SystemInfoScreen {
                     pct:        root.metrics.disk-pct;
                     warn-at:    0.80;
                     danger-at:  0.92;
-                }
-            }
-        }
-
-        Rectangle { height: 1px; background: Theme.border; }
-
-        // ── Footer: network + status ─────────────────────────────────
-        Rectangle {
-            height: 42px;
-            background: Theme.surface;
-
-            HorizontalLayout {
-                padding-left: 20px;
-                padding-right: 20px;
-                alignment: space-between;
-
-                Text {
-                    text: "↓  " + root.metrics.net-rx;
-                    color: Theme.text-primary;
-                    font-size: 14px;
-                    font-family: "monospace";
-                    vertical-alignment: center;
-                }
-
-                Text {
-                    text: "↑  " + root.metrics.net-tx;
-                    color: Theme.text-dim;
-                    font-size: 14px;
-                    font-family: "monospace";
-                    vertical-alignment: center;
-                }
-
-                HorizontalLayout {
-                    spacing: 8px;
-                    alignment: center;
-
-                    VerticalLayout {
-                        alignment: center;
-                        Rectangle {
-                            width: 8px;
-                            height: 8px;
-                            border-radius: 4px;
-                            background: root.heartbeat ? Theme.accent : #003050;
-                            animate background { duration: 700ms; easing: ease-in-out; }
-                        }
-                    }
-
-                    Text {
-                        text: "ONLINE";
-                        color: Theme.text-label;
-                        font-size: 11px;
-                        letter-spacing: 2px;
-                        vertical-alignment: center;
-                    }
                 }
             }
         }

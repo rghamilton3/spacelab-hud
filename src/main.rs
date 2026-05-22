@@ -1,12 +1,32 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 use std::error::Error;
+use std::net::{TcpStream, ToSocketAddrs};
 use std::time::Duration;
 
 use chrono::Local;
 
 mod system_info;
 mod remote_metrics;
+
+const NETWORK_PROBE_HOST:     &str      = "spacevps.tail718406.ts.net";
+const NETWORK_PROBE_PORT:     u16       = 22;
+const NETWORK_PROBE_TIMEOUT:  Duration  = Duration::from_millis(500);
+const NETWORK_PROBE_INTERVAL: Duration  = Duration::from_secs(5);
+
+fn probe_network() -> bool {
+    let addrs = match (NETWORK_PROBE_HOST, NETWORK_PROBE_PORT).to_socket_addrs() {
+        Ok(a)  => a,
+        Err(e) => { eprintln!("probe_network: DNS resolution failed: {e}"); return false; }
+    };
+    for addr in addrs {
+        match TcpStream::connect_timeout(&addr, NETWORK_PROBE_TIMEOUT) {
+            Ok(_)  => return true,
+            Err(e) => eprintln!("probe_network: connect to {addr} failed: {e}"),
+        }
+    }
+    false
+}
 
 use system_info::MetricsCollector;
 
@@ -34,6 +54,10 @@ fn main() -> Result<(), Box<dyn Error>> {
     push_local_metrics(&ui, collector.collect());
     ui.set_clock_str(current_clock());
 
+    // ── NAS + Home Assistant — start offline until fetch threads added ─
+    ui.set_nas_metrics(remote_metrics::offline_metrics("nas-01", "192.168.1.20"));
+    ui.set_ha_metrics(remote_metrics::offline_metrics("homeassistant.local", "192.168.1.30"));
+
     let ui_handle = ui.as_weak();
     let metrics_timer = slint::Timer::default();
     metrics_timer.start(
@@ -46,7 +70,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         },
     );
 
-    // ── Clock + heartbeat (1 s) ──────────────────────────────────────
+    // ── Clock (1 s) ──────────────────────────────────────────────────
     let ui_handle2 = ui.as_weak();
     let clock_timer = slint::Timer::default();
     clock_timer.start(
@@ -55,44 +79,74 @@ fn main() -> Result<(), Box<dyn Error>> {
         move || {
             if let Some(ui) = ui_handle2.upgrade() {
                 ui.set_clock_str(current_clock());
-                ui.set_heartbeat(!ui.get_heartbeat());
             }
         },
     );
 
-    // ── Remote metrics (VPS + Alertmanager) — background thread ─────
+    // ── Network reachability probe (TCP to Tailscale host) ────────────
+    let ui_weak_net = ui.as_weak();
+    std::thread::spawn(move || loop {
+        let result = std::panic::catch_unwind(probe_network);
+        let reachable = result.unwrap_or_else(|_| {
+            eprintln!("probe_network: thread panicked");
+            false
+        });
+        let ui = ui_weak_net.clone();
+        if let Err(e) = slint::invoke_from_event_loop(move || {
+            if let Some(ui) = ui.upgrade() {
+                ui.set_local_network_reachable(reachable);
+            }
+        }) {
+            eprintln!("network probe: event loop gone ({e:?}), exiting thread");
+            return;
+        }
+        std::thread::sleep(NETWORK_PROBE_INTERVAL);
+    });
+
+    // ── Remote metrics (VPS + Alertmanager) — background thread ──────
     let ui_weak = ui.as_weak();
     std::thread::spawn(move || loop {
-        let vps    = remote_metrics::VpsSnapshot::fetch();
-        let alerts = remote_metrics::RemoteAlert::fetch_all();
+        let (vps, alerts) = match std::panic::catch_unwind(|| {
+            (remote_metrics::fetch_vps(), remote_metrics::RemoteAlert::fetch_all())
+        }) {
+            Ok(pair) => pair,
+            Err(_) => {
+                eprintln!("remote_metrics: fetch thread panicked, skipping tick");
+                std::thread::sleep(Duration::from_secs(15));
+                continue;
+            }
+        };
 
         let ui = ui_weak.clone();
-        slint::invoke_from_event_loop(move || {
+        if let Err(e) = slint::invoke_from_event_loop(move || {
             let Some(ui) = ui.upgrade() else { return };
 
-            ui.set_vps_metrics(VpsMetrics {
-                reachable:   vps.reachable,
-                cadvisor_up: vps.cadvisor_up,
-                uptime:      vps.uptime.into(),
-                load_avg:    vps.load_avg.into(),
-                cpu_usage:   vps.cpu_usage.into(),
-                cpu_pct:     vps.cpu_pct,
-                ram:         vps.ram.into(),
-                ram_pct:     vps.ram_pct,
-                disk:        vps.disk.into(),
-                disk_pct:    vps.disk_pct,
-            });
+            ui.set_vps_metrics(vps);
 
-            let items: Vec<HudAlert> = alerts.iter().map(|a| HudAlert {
+            let reachable = alerts.is_some();
+            let alert_vec = alerts.unwrap_or_default();
+
+            let items: Vec<HudAlert> = alert_vec.iter().map(|a| HudAlert {
                 name:     a.name.clone().into(),
                 severity: a.severity.clone().into(),
                 age:      a.age.clone().into(),
                 summary:  a.summary.clone().into(),
             }).collect();
             let count = items.len() as i32;
+            let worst_sev: i32 = alert_vec.iter().map(|a| match a.severity.as_str() {
+                "critical" => 2,
+                "warning"  => 1,
+                _          => 0,
+            }).max().unwrap_or(0);
+
+            ui.set_alerts_reachable(reachable);
             ui.set_alerts(slint::ModelRc::new(slint::VecModel::from(items)));
             ui.set_alert_count(count);
-        }).ok();
+            ui.set_alert_worst_severity(worst_sev);
+        }) {
+            eprintln!("remote_metrics: event loop gone ({e:?}), exiting thread");
+            return;
+        }
 
         std::thread::sleep(Duration::from_secs(15));
     });
