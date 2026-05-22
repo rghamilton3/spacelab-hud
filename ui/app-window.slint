@@ -24,6 +24,7 @@ export component AppWindow inherits Window {
     in property     <[HudAlert]>     alerts;
     in property     <int>            alert-count;
     in property     <int>            alert-worst-severity;
+    in property     <bool>           alerts-reachable;
 
     // ── Overall system status (single source of truth for every header) ─
     property <float> pi-worst:
@@ -32,19 +33,22 @@ export component AppWindow inherits Window {
     property <int> pi-level: pi-worst > 0.85 ? 2 : (pi-worst > 0.70 ? 1 : 0);
 
     property <float> vps-worst:
-        Math.max(Math.max(vps-metrics.cpu-pct, vps-metrics.ram-pct), vps-metrics.disk-pct);
+        Math.max(Math.max(vps-metrics.cpu-pct, vps-metrics.temp-pct),
+                 Math.max(vps-metrics.ram-pct,  vps-metrics.disk-pct));
     property <int> vps-level:
         !vps-metrics.reachable ? 2
         : (vps-worst > 0.85 ? 2 : (vps-worst > 0.70 ? 1 : 0));
 
     property <float> nas-worst:
-        Math.max(Math.max(nas-metrics.cpu-pct, nas-metrics.ram-pct), nas-metrics.disk-pct);
+        Math.max(Math.max(nas-metrics.cpu-pct, nas-metrics.temp-pct),
+                 Math.max(nas-metrics.ram-pct,  nas-metrics.disk-pct));
     property <int> nas-level:
         !nas-metrics.reachable ? 2
         : (nas-worst > 0.85 ? 2 : (nas-worst > 0.70 ? 1 : 0));
 
     property <float> ha-worst:
-        Math.max(Math.max(ha-metrics.cpu-pct, ha-metrics.ram-pct), ha-metrics.disk-pct);
+        Math.max(Math.max(ha-metrics.cpu-pct, ha-metrics.temp-pct),
+                 Math.max(ha-metrics.ram-pct,  ha-metrics.disk-pct));
     property <int> ha-level:
         !ha-metrics.reachable ? 2
         : (ha-worst > 0.85 ? 2 : (ha-worst > 0.70 ? 1 : 0));
@@ -139,6 +143,7 @@ export component AppWindow inherits Window {
             alerts:               root.alerts;
             alert-count:          root.alert-count;
             alert-worst-severity: root.alert-worst-severity;
+            alerts-reachable:     root.alerts-reachable;
             show-back:            true;
             show-forward:         false;
         }

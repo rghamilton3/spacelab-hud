@@ -59,15 +59,19 @@ export component AlertsScreen {
     in property <[HudAlert]> alerts;
     in property <int>        alert-count;
     in property <int>        alert-worst-severity;
-    in property <bool>       show-back:    false;
-    in property <bool>       show-forward: false;
+    in property <bool>       alerts-reachable: true;
+    in property <bool>       show-back:        false;
+    in property <bool>       show-forward:     false;
 
-    property <int> level: alert-count == 0 ? 0 : alert-worst-severity;
+    property <int> level:
+        !alerts-reachable ? 2
+        : (alert-count == 0 ? 0 : alert-worst-severity);
     property <color> status-color:
         level == 2 ? Theme.danger : (level == 1 ? Theme.warn : Theme.accent);
     property <string> status-text:
-        alert-count == 0 ? "NOMINAL"
-        : (level == 2 ? "CRIT" : (level == 1 ? "WARN" : "ACTIVE"));
+        !alerts-reachable ? "OFFLINE"
+        : (alert-count == 0 ? "NOMINAL"
+           : (level == 2 ? "CRIT" : (level == 1 ? "WARN" : "ACTIVE")));
 
     VerticalLayout {
         padding: 0px;
@@ -116,8 +120,10 @@ export component AlertsScreen {
                 HorizontalLayout {
                     spacing: 8px;
                     Text {
-                        text: root.alert-count == 0 ? "NOMINAL" : (root.alert-count + " ACTIVE");
-                        color: root.alert-count == 0 ? Theme.accent : Theme.danger;
+                        text: !root.alerts-reachable ? "OFFLINE"
+                            : (root.alert-count == 0 ? "NOMINAL" : (root.alert-count + " ACTIVE"));
+                        color: !root.alerts-reachable ? Theme.danger
+                             : (root.alert-count == 0 ? Theme.accent : Theme.danger);
                         font-size: 13px;
                         letter-spacing: 2px;
                         vertical-alignment: center;
@@ -136,8 +142,30 @@ export component AlertsScreen {
 
         Rectangle { height: 1px; background: Theme.border; }
 
+        // ── Alertmanager offline ─────────────────────────────────────
+        if !root.alerts-reachable: Rectangle {
+            VerticalLayout {
+                alignment: center;
+                spacing: 16px;
+
+                Text {
+                    text: "✕";
+                    color: Theme.danger;
+                    font-size: 48px;
+                    horizontal-alignment: center;
+                }
+                Text {
+                    text: "ALERTMANAGER OFFLINE";
+                    color: Theme.danger;
+                    font-size: 18px;
+                    letter-spacing: 3px;
+                    horizontal-alignment: center;
+                }
+            }
+        }
+
         // ── No alerts ────────────────────────────────────────────────
-        if root.alert-count == 0: Rectangle {
+        if root.alerts-reachable && root.alert-count == 0: Rectangle {
             VerticalLayout {
                 alignment: center;
                 spacing: 16px;
@@ -159,7 +187,7 @@ export component AlertsScreen {
         }
 
         // ── Active alerts ─────────────────────────────────────────────
-        if root.alert-count > 0: VerticalLayout {
+        if root.alerts-reachable && root.alert-count > 0: VerticalLayout {
             padding: 10px;
             spacing: 7px;
 
