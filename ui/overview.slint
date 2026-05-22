@@ -1,4 +1,5 @@
 import { Theme, SysMetrics, ServiceMetrics, HudAlert } from "theme.slint";
+// GithubRepo not needed here — github status comes in as scalar properties
 
 // ── Stoplight row (used for full-width ALERTS row) ──────────────────
 component StoplightRow {
@@ -155,6 +156,9 @@ export component OverviewScreen {
     in property <string>         clock-str;
     in property <string>         overall-status;
     in property <color>          overall-color;
+    in property <int>            github-level;
+    in property <int>            github-pr-count;
+    in property <int>            github-issue-count;
     in property <bool>           show-back:    false;
     in property <bool>           show-forward: false;
 
@@ -258,56 +262,71 @@ export component OverviewScreen {
 
         Rectangle { height: 1px; background: Theme.border; }
 
-        // ── 2×2 grid + full-width alerts row ─────────────────────────
+        // ── Row 1 (LOCAL, VPS) + Row 2 (NAS, HA, GITHUB) + ALERTS row ─
         VerticalLayout {
             padding: 10px;
             spacing: 7px;
 
-            // GridLayout guarantees the four cells are equal width AND
-            // equal height regardless of content.
-            GridLayout {
+            // Row 1: LOCAL and VPS — equal width
+            HorizontalLayout {
                 spacing: 7px;
-                vertical-stretch: 2;
+                vertical-stretch: 1;
 
-                Row {
-                    StoplightCard {
-                        name:     "LOCAL";
-                        level:    pi-level;
-                        headline: pi-level == 0 ? "NOMINAL" : (pi-level == 2 ? "CRIT" : "WARN");
-                        detail:   "CPU "  + metrics.cpu-usage
-                                  + "\nTMP " + metrics.cpu-temp
-                                  + "\nRAM " + Math.round(metrics.ram-pct * 100) + "%"
-                                  + "\nDSK " + Math.round(metrics.disk-pct * 100) + "%";
-                    }
-                    StoplightCard {
-                        name:     "VPS";
-                        level:    vps-level;
-                        headline: vps-level == 0 ? "NOMINAL" : (vps-level == 2 ? "CRIT" : "WARN");
-                        detail:   !vps-metrics.reachable ? "unreachable"
-                                  : "CPU "  + vps-metrics.cpu-usage
-                                    + "\nRAM " + Math.round(vps-metrics.ram-pct * 100) + "%"
-                                    + "\nDSK " + Math.round(vps-metrics.disk-pct * 100) + "%";
-                    }
+                StoplightCard {
+                    horizontal-stretch: 1;
+                    name:     "LOCAL";
+                    level:    pi-level;
+                    headline: pi-level == 0 ? "NOMINAL" : (pi-level == 2 ? "CRIT" : "WARN");
+                    detail:   "CPU "  + metrics.cpu-usage
+                              + "\nTMP " + metrics.cpu-temp
+                              + "\nRAM " + Math.round(metrics.ram-pct * 100) + "%"
+                              + "\nDSK " + Math.round(metrics.disk-pct * 100) + "%";
                 }
-                Row {
-                    StoplightCard {
-                        name:     "NAS";
-                        level:    nas-level;
-                        headline: nas-level == 0 ? "NOMINAL" : (nas-level == 2 ? "CRIT" : "WARN");
-                        detail:   !nas-metrics.reachable ? "unreachable"
-                                  : "CPU "  + nas-metrics.cpu-usage
-                                    + "\nRAM " + Math.round(nas-metrics.ram-pct * 100) + "%"
-                                    + "\nDSK " + Math.round(nas-metrics.disk-pct * 100) + "%";
-                    }
-                    StoplightCard {
-                        name:     "HA";
-                        level:    ha-level;
-                        headline: ha-level == 0 ? "NOMINAL" : (ha-level == 2 ? "CRIT" : "WARN");
-                        detail:   !ha-metrics.reachable ? "unreachable"
-                                  : "CPU "  + ha-metrics.cpu-usage
-                                    + "\nRAM " + Math.round(ha-metrics.ram-pct * 100) + "%"
-                                    + "\nDSK " + Math.round(ha-metrics.disk-pct * 100) + "%";
-                    }
+                StoplightCard {
+                    horizontal-stretch: 1;
+                    name:     "VPS";
+                    level:    vps-level;
+                    headline: vps-level == 0 ? "NOMINAL" : (vps-level == 2 ? "CRIT" : "WARN");
+                    detail:   !vps-metrics.reachable ? "unreachable"
+                              : "CPU "  + vps-metrics.cpu-usage
+                                + "\nRAM " + Math.round(vps-metrics.ram-pct * 100) + "%"
+                                + "\nDSK " + Math.round(vps-metrics.disk-pct * 100) + "%";
+                }
+            }
+
+            // Row 2: NAS, HA, GITHUB — equal width (three tiles)
+            HorizontalLayout {
+                spacing: 7px;
+                vertical-stretch: 1;
+
+                StoplightCard {
+                    horizontal-stretch: 1;
+                    name:     "NAS";
+                    level:    nas-level;
+                    headline: nas-level == 0 ? "NOMINAL" : (nas-level == 2 ? "CRIT" : "WARN");
+                    detail:   !nas-metrics.reachable ? "unreachable"
+                              : "CPU "  + nas-metrics.cpu-usage
+                                + "\nRAM " + Math.round(nas-metrics.ram-pct * 100) + "%"
+                                + "\nDSK " + Math.round(nas-metrics.disk-pct * 100) + "%";
+                }
+                StoplightCard {
+                    horizontal-stretch: 1;
+                    name:     "HA";
+                    level:    ha-level;
+                    headline: ha-level == 0 ? "NOMINAL" : (ha-level == 2 ? "CRIT" : "WARN");
+                    detail:   !ha-metrics.reachable ? "unreachable"
+                              : "CPU "  + ha-metrics.cpu-usage
+                                + "\nRAM " + Math.round(ha-metrics.ram-pct * 100) + "%"
+                                + "\nDSK " + Math.round(ha-metrics.disk-pct * 100) + "%";
+                }
+                StoplightCard {
+                    horizontal-stretch: 1;
+                    name:     "GITHUB";
+                    level:    github-level;
+                    headline: github-level == 0 ? "OK"
+                              : (github-level == 2 ? "FAIL" : "WARN");
+                    detail:   github-pr-count + " PR\n"
+                              + github-issue-count + " ISS";
                 }
             }
 

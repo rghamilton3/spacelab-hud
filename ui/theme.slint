@@ -38,6 +38,23 @@ export struct HudAlert {
     summary:  string,
 }
 
+export struct GithubRepo {
+    name:        string,
+    pr-count:    int,
+    issue-count: int,
+    ci-status:   string,
+    ci-level:    int,
+}
+
+export struct GithubEvent {
+    repo:   string,
+    kind:   string,
+    title:  string,
+    author: string,
+    age:    string,
+    level:  int,
+}
+
 export global Theme {
     out property <color> bg:           #0a0e14;
     out property <color> surface:      #0f1828;

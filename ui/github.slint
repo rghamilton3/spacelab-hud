@@ -1,0 +1,332 @@
+import { Theme, GithubRepo, GithubEvent } from "theme.slint";
+
+component RepoCard {
+    in property <GithubRepo> repo;
+
+    property <color> ci-color:
+        root.repo.ci-level == 2 ? Theme.danger
+        : (root.repo.ci-level == 1 ? Theme.warn : Theme.accent);
+
+    Rectangle {
+        background: Theme.surface;
+        border-radius: 6px;
+        clip: true;
+
+        HorizontalLayout {
+            spacing: 0px;
+
+            Rectangle {
+                width: 3px;
+                background: ci-color;
+                animate background { duration: 500ms; }
+            }
+
+            VerticalLayout {
+                padding: 12px;
+                spacing: 5px;
+
+                Text {
+                    text: root.repo.name;
+                    color: Theme.text-primary;
+                    font-size: 14px;
+                    font-family: "monospace";
+                    overflow: elide;
+                }
+
+                HorizontalLayout {
+                    spacing: 16px;
+
+                    HorizontalLayout {
+                        spacing: 6px;
+                        Text {
+                            text: root.repo.pr-count;
+                            color: Theme.text-primary;
+                            font-size: 20px;
+                            font-family: "monospace";
+                            vertical-alignment: center;
+                        }
+                        Text {
+                            text: "PR";
+                            color: Theme.text-label;
+                            font-size: 11px;
+                            letter-spacing: 2px;
+                            vertical-alignment: center;
+                        }
+                    }
+
+                    HorizontalLayout {
+                        spacing: 6px;
+                        Text {
+                            text: root.repo.issue-count;
+                            color: Theme.text-primary;
+                            font-size: 20px;
+                            font-family: "monospace";
+                            vertical-alignment: center;
+                        }
+                        Text {
+                            text: "ISS";
+                            color: Theme.text-label;
+                            font-size: 11px;
+                            letter-spacing: 2px;
+                            vertical-alignment: center;
+                        }
+                    }
+
+                    HorizontalLayout {
+                        spacing: 6px;
+                        alignment: center;
+                        VerticalLayout {
+                            alignment: center;
+                            Rectangle {
+                                width: 7px;
+                                height: 7px;
+                                border-radius: 4px;
+                                background: ci-color;
+                                animate background { duration: 500ms; }
+                            }
+                        }
+                        Text {
+                            text: root.repo.ci-status;
+                            color: ci-color;
+                            font-size: 12px;
+                            letter-spacing: 1px;
+                            vertical-alignment: center;
+                            animate color { duration: 500ms; }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+component EventRow {
+    in property <GithubEvent> event;
+
+    property <color> ev-color:
+        root.event.level == 2 ? Theme.danger
+        : (root.event.level == 1 ? Theme.warn : Theme.accent);
+
+    HorizontalLayout {
+        spacing: 10px;
+        padding-top: 6px;
+        padding-bottom: 6px;
+
+        VerticalLayout {
+            alignment: center;
+            Rectangle {
+                width: 6px;
+                height: 6px;
+                border-radius: 3px;
+                background: ev-color;
+            }
+        }
+
+        VerticalLayout {
+            spacing: 2px;
+            alignment: center;
+            horizontal-stretch: 1;
+
+            HorizontalLayout {
+                spacing: 8px;
+                Text {
+                    text: root.event.kind;
+                    color: ev-color;
+                    font-size: 10px;
+                    letter-spacing: 2px;
+                    vertical-alignment: center;
+                }
+                Text {
+                    text: root.event.repo;
+                    color: Theme.text-label;
+                    font-size: 10px;
+                    letter-spacing: 1px;
+                    vertical-alignment: center;
+                    overflow: elide;
+                    horizontal-stretch: 1;
+                }
+                Text {
+                    text: root.event.age;
+                    color: Theme.text-dim;
+                    font-size: 10px;
+                    vertical-alignment: center;
+                }
+            }
+            Text {
+                text: root.event.title;
+                color: Theme.text-primary;
+                font-size: 12px;
+                overflow: elide;
+            }
+        }
+    }
+}
+
+export component GithubScreen {
+    in property <[GithubRepo]>  repos;
+    in property <[GithubEvent]> events;
+    in property <int>           github-level;
+    in property <string>        github-status;
+    in property <int>           github-pr-count;
+    in property <int>           github-issue-count;
+    in property <bool>          configured:    false;
+    in property <bool>          reachable:     true;
+    in property <bool>          show-back:     false;
+    in property <bool>          show-forward:  false;
+
+    property <color> status-color:
+        github-level == 2 ? Theme.danger
+        : (github-level == 1 ? Theme.warn : Theme.accent);
+
+    VerticalLayout {
+        padding: 0px;
+        spacing: 0px;
+
+        // ── Header ──────────────────────────────────────────────────
+        Rectangle {
+            height: 56px;
+            background: Theme.surface;
+
+            HorizontalLayout {
+                padding-left: 14px;
+                padding-right: 14px;
+                alignment: space-between;
+
+                HorizontalLayout {
+                    spacing: 8px;
+                    Text {
+                        text: "‹";
+                        color: Theme.text-label;
+                        font-size: 28px;
+                        vertical-alignment: center;
+                        opacity: root.show-back ? 0.8 : 0.0;
+                        animate opacity { duration: 200ms; }
+                    }
+                    HorizontalLayout {
+                        spacing: 0px;
+                        Text {
+                            text: "SPACELAB-1 // GITHUB // ";
+                            color: Theme.accent;
+                            font-size: 17px;
+                            letter-spacing: 3px;
+                            vertical-alignment: center;
+                        }
+                        Text {
+                            text: !root.configured ? "SETUP" : root.github-status;
+                            color: !root.configured ? Theme.text-label : status-color;
+                            font-size: 17px;
+                            letter-spacing: 3px;
+                            vertical-alignment: center;
+                            animate color { duration: 500ms; }
+                        }
+                    }
+                }
+
+                HorizontalLayout {
+                    spacing: 8px;
+                    alignment: center;
+                    Text {
+                        text: root.configured
+                            ? (root.reachable ? "ONLINE" : "OFFLINE")
+                            : "NOT SET";
+                        color: root.configured && !root.reachable ? Theme.danger : Theme.text-label;
+                        font-size: 11px;
+                        letter-spacing: 2px;
+                        vertical-alignment: center;
+                    }
+                    Text {
+                        text: "›";
+                        color: Theme.text-label;
+                        font-size: 28px;
+                        vertical-alignment: center;
+                        opacity: root.show-forward ? 0.8 : 0.0;
+                        animate opacity { duration: 200ms; }
+                    }
+                }
+            }
+        }
+
+        Rectangle { height: 1px; background: Theme.border; }
+
+        // ── Not configured ───────────────────────────────────────────
+        if !root.configured: Rectangle {
+            VerticalLayout {
+                alignment: center;
+                spacing: 16px;
+
+                Text {
+                    text: "🔒";
+                    font-size: 40px;
+                    horizontal-alignment: center;
+                }
+                Text {
+                    text: "NOT CONFIGURED";
+                    color: Theme.text-label;
+                    font-size: 18px;
+                    letter-spacing: 3px;
+                    horizontal-alignment: center;
+                }
+                Text {
+                    text: "Visit :8765 on this device to configure\nGitHub repos and access token";
+                    color: Theme.text-dim;
+                    font-size: 13px;
+                    horizontal-alignment: center;
+                }
+            }
+        }
+
+        // ── Configured but unreachable ───────────────────────────────
+        if root.configured && !root.reachable: Rectangle {
+            VerticalLayout {
+                alignment: center;
+                spacing: 16px;
+
+                Text {
+                    text: "✕";
+                    color: Theme.danger;
+                    font-size: 48px;
+                    horizontal-alignment: center;
+                }
+                Text {
+                    text: "GITHUB UNREACHABLE";
+                    color: Theme.danger;
+                    font-size: 18px;
+                    letter-spacing: 3px;
+                    horizontal-alignment: center;
+                }
+            }
+        }
+
+        // ── Configured and reachable ─────────────────────────────────
+        if root.configured && root.reachable: VerticalLayout {
+            padding: 10px;
+            spacing: 7px;
+
+            // Recent events (shown only when non-empty)
+            if root.events.length > 0: Rectangle {
+                background: Theme.surface;
+                border-radius: 6px;
+
+                VerticalLayout {
+                    padding: 10px;
+                    spacing: 0px;
+
+                    HorizontalLayout {
+                        padding-bottom: 4px;
+                        Text {
+                            text: "RECENT ACTIVITY";
+                            color: Theme.text-label;
+                            font-size: 10px;
+                            letter-spacing: 3px;
+                        }
+                    }
+
+                    for ev in root.events: EventRow { event: ev; }
+                }
+            }
+
+            // Repo cards
+            for repo in root.repos: RepoCard { repo: repo; }
+        }
+    }
+}
