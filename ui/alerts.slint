@@ -29,25 +29,25 @@ component AlertRow {
                     Text {
                         text: root.alert.name;
                         color: sev-color;
-                        font-size: 15px;
+                        font-size: 16px;
                         font-family: "monospace";
                     }
                     Text {
                         text: root.alert.age;
                         color: Theme.text-dim;
-                        font-size: 12px;
+                        font-size: 16px;
                         vertical-alignment: center;
                     }
                 }
                 Text {
                     text: root.alert.summary;
                     color: Theme.text-primary;
-                    font-size: 12px;
+                    font-size: 16px;
                 }
                 Text {
                     text: root.alert.severity;
                     color: sev-color;
-                    font-size: 10px;
+                    font-size: 16px;
                     letter-spacing: 2px;
                 }
             }
@@ -124,7 +124,7 @@ export component AlertsScreen {
                             : (root.alert-count == 0 ? "NOMINAL" : (root.alert-count + " ACTIVE"));
                         color: !root.alerts-reachable ? Theme.danger
                              : (root.alert-count == 0 ? Theme.accent : Theme.danger);
-                        font-size: 13px;
+                        font-size: 16px;
                         letter-spacing: 2px;
                         vertical-alignment: center;
                     }

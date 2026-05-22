@@ -17,7 +17,7 @@ export component MetricCard {
             Text {
                 text: root.label;
                 color: Theme.text-label;
-                font-size: 11px;
+                font-size: 16px;
                 letter-spacing: 2px;
             }
             Text {
@@ -66,7 +66,7 @@ export component MetricBarCard {
                     Text {
                         text: root.label;
                         color: Theme.text-label;
-                        font-size: 11px;
+                        font-size: 16px;
                         letter-spacing: 2px;
                     }
                     Text {
@@ -173,7 +173,7 @@ export component SystemInfoScreen {
                     Text {
                         text: root.network-reachable ? "ONLINE" : "OFFLINE";
                         color: root.network-reachable ? Theme.text-label : Theme.danger;
-                        font-size: 11px;
+                        font-size: 16px;
                         letter-spacing: 2px;
                         vertical-alignment: center;
                         animate color { duration: 400ms; }

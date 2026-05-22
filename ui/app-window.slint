@@ -1,5 +1,6 @@
-import { Theme, SysMetrics, ServiceMetrics, HudAlert } from "theme.slint";
+import { Theme, SysMetrics, ServiceMetrics, HudAlert, GithubRepo, GithubEvent } from "theme.slint";
 import { OverviewScreen }   from "overview.slint";
+import { GithubScreen }     from "github.slint";
 import { SystemInfoScreen } from "system-info.slint";
 import { VpsHealthScreen }  from "vps-health.slint";
 import { NasHealthScreen }  from "nas-health.slint";
@@ -25,6 +26,15 @@ export component AppWindow inherits Window {
     in property     <int>            alert-count;
     in property     <int>            alert-worst-severity;
     in property     <bool>           alerts-reachable;
+
+    in property     <[GithubRepo]>   github-repos;
+    in property     <[GithubEvent]>  github-events;
+    in property     <int>            github-level;
+    in property     <string>         github-status;
+    in property     <int>            github-pr-count;
+    in property     <int>            github-issue-count;
+    in property     <bool>           github-configured;
+    in property     <bool>           github-reachable;
 
     // ── Overall system status (single source of truth for every header) ─
     property <float> pi-worst:
@@ -59,7 +69,7 @@ export component AppWindow inherits Window {
     property <int> overall-level:
         Math.max(Math.max(Math.max(pi-level, vps-level),
                           Math.max(nas-level, ha-level)),
-                 alerts-rollup-level);
+                 Math.max(alerts-rollup-level, github-level));
     property <color> overall-color:
         overall-level == 2 ? Theme.danger
         : (overall-level == 1 ? Theme.warn : Theme.accent);
@@ -68,8 +78,8 @@ export component AppWindow inherits Window {
         : (overall-level == 2 ? "CRIT" : "WARN");
 
     // ── Swipe state ───────────────────────────────────────────────────
-    // 6 pages: 0 Overview, 1 VPS, 2 NAS, 3 HA, 4 HUD, 5 Alerts
-    property        <int>    page-count:     6;
+    // 7 pages: 0 Overview, 1 GitHub, 2 VPS, 3 NAS, 4 HA, 5 HUD, 6 Alerts
+    property        <int>    page-count:     7;
     in-out property <int>    current-page:   0;
     property        <int>    committed-page: 0;
     property        <length> drag-offset:    0px;
@@ -95,12 +105,31 @@ export component AppWindow inherits Window {
             clock-str:            root.clock-str;
             overall-status:       root.overall-status;
             overall-color:        root.overall-color;
+            github-level:         root.github-level;
+            github-pr-count:      root.github-pr-count;
+            github-issue-count:   root.github-issue-count;
             show-back:            false;
             show-forward:         true;
         }
 
-        VpsHealthScreen {
+        GithubScreen {
             x: 1 * root.width;
+            width: root.width;
+            height: parent.height;
+            repos:              root.github-repos;
+            events:             root.github-events;
+            github-level:       root.github-level;
+            github-status:      root.github-status;
+            github-pr-count:    root.github-pr-count;
+            github-issue-count: root.github-issue-count;
+            configured:         root.github-configured;
+            reachable:          root.github-reachable;
+            show-back:          true;
+            show-forward:       true;
+        }
+
+        VpsHealthScreen {
+            x: 2 * root.width;
             width: root.width;
             height: parent.height;
             metrics:      root.vps-metrics;
@@ -109,7 +138,7 @@ export component AppWindow inherits Window {
         }
 
         NasHealthScreen {
-            x: 2 * root.width;
+            x: 3 * root.width;
             width: root.width;
             height: parent.height;
             metrics:      root.nas-metrics;
@@ -118,7 +147,7 @@ export component AppWindow inherits Window {
         }
 
         HaHealthScreen {
-            x: 3 * root.width;
+            x: 4 * root.width;
             width: root.width;
             height: parent.height;
             metrics:      root.ha-metrics;
@@ -127,7 +156,7 @@ export component AppWindow inherits Window {
         }
 
         SystemInfoScreen {
-            x: 4 * root.width;
+            x: 5 * root.width;
             width: root.width;
             height: parent.height;
             metrics:           root.metrics;
@@ -137,7 +166,7 @@ export component AppWindow inherits Window {
         }
 
         AlertsScreen {
-            x: 5 * root.width;
+            x: 6 * root.width;
             width: root.width;
             height: parent.height;
             alerts:               root.alerts;

@@ -6,8 +6,12 @@ use std::time::Duration;
 
 use chrono::Local;
 
-mod system_info;
+mod config;
+mod github_watcher;
 mod remote_metrics;
+mod shared_state;
+mod system_info;
+mod web_config;
 
 const NETWORK_PROBE_HOST:     &str      = "spacevps.tail718406.ts.net";
 const NETWORK_PROBE_PORT:     u16       = 22;
@@ -54,9 +58,19 @@ fn main() -> Result<(), Box<dyn Error>> {
     push_local_metrics(&ui, collector.collect());
     ui.set_clock_str(current_clock());
 
-    // ── NAS + Home Assistant — start offline until fetch threads added ─
+    // ── NAS + Home Assistant — start offline ─────────────────────────
     ui.set_nas_metrics(remote_metrics::offline_metrics("nas-01", "192.168.1.20"));
     ui.set_ha_metrics(remote_metrics::offline_metrics("homeassistant.local", "192.168.1.30"));
+
+    // ── GitHub initial state — "not configured" until watcher runs ───
+    ui.set_github_configured(false);
+    ui.set_github_reachable(false);
+    ui.set_github_level(0);
+    ui.set_github_status("SETUP".into());
+    ui.set_github_pr_count(0);
+    ui.set_github_issue_count(0);
+    ui.set_github_repos(slint::ModelRc::new(slint::VecModel::from(vec![])));
+    ui.set_github_events(slint::ModelRc::new(slint::VecModel::from(vec![])));
 
     let ui_handle = ui.as_weak();
     let metrics_timer = slint::Timer::default();
@@ -83,7 +97,10 @@ fn main() -> Result<(), Box<dyn Error>> {
         },
     );
 
-    // ── Network reachability probe (TCP to Tailscale host) ────────────
+    // ── Shared alert state ───────────────────────────────────────────
+    let shared_alerts = shared_state::new_shared_alerts();
+
+    // ── Network reachability probe ────────────────────────────────────
     let ui_weak_net = ui.as_weak();
     std::thread::spawn(move || loop {
         let result = std::panic::catch_unwind(probe_network);
@@ -103,10 +120,11 @@ fn main() -> Result<(), Box<dyn Error>> {
         std::thread::sleep(NETWORK_PROBE_INTERVAL);
     });
 
-    // ── Remote metrics (VPS + Alertmanager) — background thread ──────
-    let ui_weak = ui.as_weak();
+    // ── Remote metrics (VPS) + system alerts ─────────────────────────
+    let ui_weak_remote   = ui.as_weak();
+    let shared_alerts_2  = shared_alerts.clone();
     std::thread::spawn(move || loop {
-        let (vps, alerts) = match std::panic::catch_unwind(|| {
+        let (vps, sys_alerts) = match std::panic::catch_unwind(|| {
             (remote_metrics::fetch_vps(), remote_metrics::RemoteAlert::fetch_all())
         }) {
             Ok(pair) => pair,
@@ -117,38 +135,52 @@ fn main() -> Result<(), Box<dyn Error>> {
             }
         };
 
-        let ui = ui_weak.clone();
+        // Update system alerts in shared state
+        let reachable = sys_alerts.is_some();
+        {
+            let mut guard = shared_alerts_2.lock().unwrap();
+            guard.system = sys_alerts.unwrap_or_default().into_iter().map(|a| {
+                shared_state::AlertData {
+                    name:     a.name,
+                    severity: a.severity,
+                    age:      a.age,
+                    summary:  a.summary,
+                }
+            }).collect();
+        }
+
+        let ui = ui_weak_remote.clone();
         if let Err(e) = slint::invoke_from_event_loop(move || {
             let Some(ui) = ui.upgrade() else { return };
-
             ui.set_vps_metrics(vps);
-
-            let reachable = alerts.is_some();
-            let alert_vec = alerts.unwrap_or_default();
-
-            let items: Vec<HudAlert> = alert_vec.iter().map(|a| HudAlert {
-                name:     a.name.clone().into(),
-                severity: a.severity.clone().into(),
-                age:      a.age.clone().into(),
-                summary:  a.summary.clone().into(),
-            }).collect();
-            let count = items.len() as i32;
-            let worst_sev: i32 = alert_vec.iter().map(|a| match a.severity.as_str() {
-                "critical" => 2,
-                "warning"  => 1,
-                _          => 0,
-            }).max().unwrap_or(0);
-
-            ui.set_alerts_reachable(reachable);
-            ui.set_alerts(slint::ModelRc::new(slint::VecModel::from(items)));
-            ui.set_alert_count(count);
-            ui.set_alert_worst_severity(worst_sev);
         }) {
             eprintln!("remote_metrics: event loop gone ({e:?}), exiting thread");
             return;
         }
 
+        shared_state::push_alerts_to_ui(&ui_weak_remote, &shared_alerts_2, reachable);
+
         std::thread::sleep(Duration::from_secs(15));
+    });
+
+    // ── Tokio runtime for async tasks (GitHub watcher + web config) ───
+    let rt = tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()?;
+
+    let cfg     = config::AppConfig::load();
+    let port    = cfg.web_config_port;
+    let cfg_ref = config::new_config_ref(cfg);
+
+    let ui_weak_gh     = ui.as_weak();
+    let cfg_ref_gh     = cfg_ref.clone();
+    let shared_alerts_gh = shared_alerts.clone();
+    rt.spawn(async move {
+        github_watcher::run(ui_weak_gh, cfg_ref_gh, shared_alerts_gh).await;
+    });
+
+    rt.spawn(async move {
+        web_config::serve(cfg_ref, port).await;
     });
 
     ui.run()?;
