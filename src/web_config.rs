@@ -10,6 +10,17 @@ use serde::{Deserialize, Serialize};
 
 use crate::config::{AppConfig, ConfigRef};
 
+/// Minimal HTML-attribute escaper for values interpolated into the config
+/// page. The form values are LAN-trusted, but escaping keeps a stray `"` or
+/// `<` in a saved field from breaking out of its attribute (or injecting
+/// script) on the next page render.
+fn esc(s: &str) -> String {
+    s.replace('&', "&amp;")
+        .replace('"', "&quot;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
+}
+
 // ── GitHub API helpers ────────────────────────────────────────────────
 
 async fn gh_get<T: serde::de::DeserializeOwned>(pat: &str, url: &str) -> Result<T, String> {
@@ -139,23 +150,24 @@ pub async fn serve(config: ConfigRef, port: u16) {
 
 async fn ui_handler(State(config): State<ConfigRef>) -> impl IntoResponse {
     let cfg  = config.read().unwrap().clone();
-    let pat  = &cfg.github_pat;
-    let user = &cfg.github_username;
+    // Escape every user-controlled string before it lands in an HTML attribute.
+    let pat  = esc(&cfg.github_pat);
+    let user = esc(&cfg.github_username);
     let poll = cfg.github_poll_secs;
     let current_repos_json = serde_json::to_string(&cfg.github_repos)
         .unwrap_or_else(|_| "[]".to_string());
 
-    let beszel_url      = &cfg.beszel_url;
-    let vps_name        = &cfg.vps_name;
-    let vps_hostname    = &cfg.vps_hostname;
-    let vps_ip          = &cfg.vps_ip;
-    let probe_host      = &cfg.probe_host;
+    let beszel_url      = esc(&cfg.beszel_url);
+    let vps_name        = esc(&cfg.vps_name);
+    let vps_hostname    = esc(&cfg.vps_hostname);
+    let vps_ip          = esc(&cfg.vps_ip);
+    let probe_host      = esc(&cfg.probe_host);
     let probe_port      = cfg.probe_port;
-    let nas_hostname    = &cfg.nas_hostname;
-    let nas_ip          = &cfg.nas_ip;
-    let ha_hostname     = &cfg.ha_hostname;
-    let ha_ip           = &cfg.ha_ip;
-    let fan_serial_port = &cfg.fan_serial_port;
+    let nas_hostname    = esc(&cfg.nas_hostname);
+    let nas_ip          = esc(&cfg.nas_ip);
+    let ha_hostname     = esc(&cfg.ha_hostname);
+    let ha_ip           = esc(&cfg.ha_ip);
+    let fan_serial_port = esc(&cfg.fan_serial_port);
     let fan_temp_warn_c = cfg.fan_temp_warn_c;
     let fan_temp_crit_c = cfg.fan_temp_crit_c;
 
@@ -487,8 +499,10 @@ async fn save_handler(
         ha_ip:         form.ha_ip.trim().to_string(),
 
         fan_serial_port: form.fan_serial_port.trim().to_string(),
-        fan_temp_warn_c: form.fan_temp_warn_c,
-        fan_temp_crit_c: form.fan_temp_crit_c,
+        // Keep warn <= crit so the threshold branches in fan_telem.rs can't
+        // straddle an inverted range (which would silently fire neither).
+        fan_temp_warn_c: form.fan_temp_warn_c.min(form.fan_temp_crit_c),
+        fan_temp_crit_c: form.fan_temp_crit_c.max(form.fan_temp_warn_c),
     };
 
     if let Err(e) = new_cfg.save() {

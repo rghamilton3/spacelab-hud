@@ -63,19 +63,22 @@ impl Default for AppConfig {
 
             web_config_port:  80,
 
-            beszel_url:    "http://spacevps.tail718406.ts.net:8090".to_string(),
-            vps_name:      "spacevps".to_string(),
-            vps_hostname:  "spacevps".to_string(),
-            vps_ip:        "spacevps.tail718406.ts.net".to_string(),
+            // Infrastructure endpoints are intentionally blank by default —
+            // populate them via the web config UI. Keeping them empty avoids
+            // baking one deployment's hostnames/IPs into the shared source.
+            beszel_url:    String::new(),
+            vps_name:      String::new(),
+            vps_hostname:  String::new(),
+            vps_ip:        String::new(),
 
-            probe_host:    "spacevps.tail718406.ts.net".to_string(),
+            probe_host:    String::new(),
             probe_port:    22,
 
-            nas_hostname:  "nas-01".to_string(),
-            nas_ip:        "192.168.1.20".to_string(),
+            nas_hostname:  String::new(),
+            nas_ip:        String::new(),
 
-            ha_hostname:   "homeassistant.local".to_string(),
-            ha_ip:         "192.168.1.30".to_string(),
+            ha_hostname:   String::new(),
+            ha_ip:         String::new(),
 
             fan_serial_port: "/dev/ttyACM0".to_string(),
             fan_temp_warn_c: 35.0,
