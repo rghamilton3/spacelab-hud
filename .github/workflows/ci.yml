@@ -31,8 +31,9 @@ jobs:
 
   build-pi4:
     name: Build Pi 4 (aarch64, glibc 2.35)
-    # Only cross-compile/release on version tags, not on every main push or PR.
-    if: startsWith(github.ref, 'refs/tags/v')
+    # Validate the cross-compile on PRs and tags, but never on plain main pushes.
+    # Artifact upload + GitHub Release happen on tags only (see step-level conditions).
+    if: startsWith(github.ref, 'refs/tags/v') || github.event_name == 'pull_request'
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -76,13 +77,14 @@ jobs:
           cargo zigbuild --release --target aarch64-unknown-linux-gnu.2.35
 
       - uses: actions/upload-artifact@v4
+        if: startsWith(github.ref, 'refs/tags/v')
         with:
           name: spacelab-hub-pi4
           path: target/aarch64-unknown-linux-gnu/release/spacelab-hub
           if-no-files-found: error
 
       - name: Create GitHub Release
-        if: startsWith(github.ref, 'refs/tags/')
+        if: startsWith(github.ref, 'refs/tags/v')
         uses: softprops/action-gh-release@v2
         with:
           files: target/aarch64-unknown-linux-gnu/release/spacelab-hub

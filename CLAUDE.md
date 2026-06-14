@@ -82,7 +82,7 @@ Target display is 720×720 pixels, touch-enabled. Design UI components with:
 GitHub Actions (`.github/workflows/ci.yml`) triggers on every push to `main`, on pull requests, and on version tags (`v*`):
 
 - **Check & Clippy** — `cargo check` + `cargo clippy` on the native host. Runs on `main` pushes, PRs, and tags.
-- **Build Pi 4** — cross-compiles the release binary for `aarch64-unknown-linux-gnu.2.35` (Pi 4 Bookworm). Runs **only on version tags** (`refs/tags/v*`): uploads the binary as a workflow artifact and attaches it to the tag's GitHub Release.
+- **Build Pi 4** — cross-compiles the release binary for `aarch64-unknown-linux-gnu.2.35` (Pi 4 Bookworm). Runs on **PRs and version tags** (never on plain `main` pushes): PRs validate the cross-compile only, while tags (`refs/tags/v*`) additionally upload the binary as a workflow artifact and attach it to the tag's GitHub Release.
 
 To release: `git tag v0.x.y && git push --tags`. The release binary will appear at the tag's GitHub Release page.
 

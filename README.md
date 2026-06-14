@@ -1,5 +1,15 @@
 # SpaceLab HUD
 
+[![CI](https://github.com/rghamilton3/spacelab-hud/actions/workflows/ci.yml/badge.svg)](https://github.com/rghamilton3/spacelab-hud/actions/workflows/ci.yml)
+[![Latest release](https://img.shields.io/github/v/release/rghamilton3/spacelab-hud?sort=semver&logo=github)](https://github.com/rghamilton3/spacelab-hud/releases/latest)
+[![License: MIT](https://img.shields.io/github/license/rghamilton3/spacelab-hud)](LICENSE)
+[![Last commit](https://img.shields.io/github/last-commit/rghamilton3/spacelab-hud)](https://github.com/rghamilton3/spacelab-hud/commits/main)
+
+[![Rust](https://img.shields.io/badge/Rust-2021-000000?logo=rust&logoColor=white)](https://www.rust-lang.org/)
+[![Slint](https://img.shields.io/badge/Slint-1.16-2379f4?logo=slint&logoColor=white)](https://slint.rs/)
+[![Platform](https://img.shields.io/badge/platform-Raspberry%20Pi%204%20%C2%B7%20aarch64-c51a4a?logo=raspberrypi&logoColor=white)](https://www.raspberrypi.com/)
+[![Display](https://img.shields.io/badge/display-720%C3%97720%20touch-444444)](https://www.waveshare.com/4inch-hdmi-lcd-c.htm)
+
 A homelab server rack monitor UI running on a Raspberry Pi 4, built with [Slint](https://slint.rs/) and Rust. Displays real-time system metrics on a [Waveshare 4" Square HDMI Capacitive Touch LCD](https://www.waveshare.com/4inch-hdmi-lcd-c.htm) (720×720).
 
 ## Building
