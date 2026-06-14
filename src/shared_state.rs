@@ -9,16 +9,18 @@ pub struct AlertData {
     pub summary:  String,
 }
 
-/// Holds alert sets from each source. Either source can update its half independently.
+/// Holds alert sets from each source. Either source can update its slice independently.
 #[derive(Default)]
 pub struct SharedAlerts {
     pub system: Vec<AlertData>,
     pub github: Vec<AlertData>,
+    pub fan:    Vec<AlertData>,
 }
 
 impl SharedAlerts {
     pub fn merged(&self) -> Vec<AlertData> {
-        let mut all = self.github.clone();
+        let mut all = self.fan.clone();
+        all.extend(self.github.iter().cloned());
         all.extend(self.system.iter().cloned());
         all
     }
