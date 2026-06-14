@@ -23,12 +23,12 @@ export component VpsHealthScreen {
 
         // ── Header ──────────────────────────────────────────────────
         Rectangle {
-            height: 56px;
+            height: 84px;
             background: Theme.surface;
 
             HorizontalLayout {
-                padding-left: 14px;
-                padding-right: 14px;
+                padding-left: 21px;
+                padding-right: 21px;
                 alignment: space-between;
 
                 HorizontalLayout {
@@ -36,7 +36,7 @@ export component VpsHealthScreen {
                     Text {
                         text: "‹";
                         color: Theme.text-label;
-                        font-size: 28px;
+                        font-size: 42px;
                         vertical-alignment: center;
                         opacity: root.show-back ? 0.8 : 0.0;
                         animate opacity { duration: 200ms; }
@@ -46,14 +46,14 @@ export component VpsHealthScreen {
                         Text {
                             text: "SPACELAB-1 // VPS // ";
                             color: Theme.accent;
-                            font-size: 17px;
+                            font-size: 26px;
                             letter-spacing: 3px;
                             vertical-alignment: center;
                         }
                         Text {
                             text: status-text;
                             color: status-color;
-                            font-size: 17px;
+                            font-size: 26px;
                             letter-spacing: 3px;
                             vertical-alignment: center;
                             animate color { duration: 500ms; }
@@ -67,9 +67,9 @@ export component VpsHealthScreen {
                     VerticalLayout {
                         alignment: center;
                         Rectangle {
-                            width: 8px;
-                            height: 8px;
-                            border-radius: 4px;
+                            width: 12px;
+                            height: 12px;
+                            border-radius: 6px;
                             background: root.metrics.reachable ? Theme.success : Theme.danger;
                             animate background { duration: 400ms; }
                         }
@@ -77,15 +77,15 @@ export component VpsHealthScreen {
                     Text {
                         text: root.metrics.reachable ? "ONLINE" : "OFFLINE";
                         color: root.metrics.reachable ? Theme.text-label : Theme.danger;
-                        font-size: 16px;
-                        letter-spacing: 2px;
+                        font-size: 24px;
+                        letter-spacing: 3px;
                         vertical-alignment: center;
                         animate color { duration: 400ms; }
                     }
                     Text {
                         text: "›";
                         color: Theme.text-label;
-                        font-size: 28px;
+                        font-size: 42px;
                         vertical-alignment: center;
                         opacity: root.show-forward ? 0.8 : 0.0;
                         animate opacity { duration: 200ms; }

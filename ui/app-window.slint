@@ -211,9 +211,9 @@ export component AppWindow inherits Window {
                 if abs-delta < 20px {
                     if root.current-page == 0 {
                         // Overview: header edge-tap or card-tap navigation
-                        // Layout constants mirror overview.slint (header 56px + 1px border,
+                        // Layout constants mirror overview.slint (header 84px + 1px border,
                         // inner padding 10px, row gap 7px, three equal-height rows).
-                        let header = 57px;
+                        let header = 85px;
                         let pad    = 10px;
                         let gap    = 7px;
                         let rowh   = (root.height - header - 2 * pad - 2 * gap) / 3;
