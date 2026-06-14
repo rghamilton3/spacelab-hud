@@ -7,6 +7,7 @@ use std::time::Duration;
 use chrono::Local;
 
 mod config;
+mod fan_telem;
 mod github_watcher;
 mod remote_metrics;
 mod shared_state;
@@ -162,6 +163,9 @@ fn main() -> Result<(), Box<dyn Error>> {
 
         std::thread::sleep(Duration::from_secs(15));
     });
+
+    // ── Fan controller telemetry (USB serial) ───────────────────────
+    fan_telem::spawn(shared_alerts.clone(), ui.as_weak());
 
     // ── Tokio runtime for async tasks (GitHub watcher + web config) ───
     let rt = tokio::runtime::Builder::new_multi_thread()
