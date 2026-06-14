@@ -215,7 +215,7 @@ pub async fn run(
     let mut since       = Utc::now().to_rfc3339();
 
     loop {
-        let cfg           = config_ref.read().await.clone();
+        let cfg           = config_ref.read().unwrap().clone();
         let username_lower = cfg.github_username.to_lowercase();
 
         if !cfg.is_configured() {

@@ -82,7 +82,7 @@ struct ReposResp {
 }
 
 async fn repos_handler(State(config): State<ConfigRef>) -> impl IntoResponse {
-    let pat = config.read().await.github_pat.clone();
+    let pat = config.read().unwrap().github_pat.clone();
     if pat.is_empty() {
         return Json(ReposResp {
             repos: vec![],
@@ -138,12 +138,26 @@ pub async fn serve(config: ConfigRef, port: u16) {
 }
 
 async fn ui_handler(State(config): State<ConfigRef>) -> impl IntoResponse {
-    let cfg  = config.read().await.clone();
+    let cfg  = config.read().unwrap().clone();
     let pat  = &cfg.github_pat;
     let user = &cfg.github_username;
     let poll = cfg.github_poll_secs;
     let current_repos_json = serde_json::to_string(&cfg.github_repos)
         .unwrap_or_else(|_| "[]".to_string());
+
+    let beszel_url      = &cfg.beszel_url;
+    let vps_name        = &cfg.vps_name;
+    let vps_hostname    = &cfg.vps_hostname;
+    let vps_ip          = &cfg.vps_ip;
+    let probe_host      = &cfg.probe_host;
+    let probe_port      = cfg.probe_port;
+    let nas_hostname    = &cfg.nas_hostname;
+    let nas_ip          = &cfg.nas_ip;
+    let ha_hostname     = &cfg.ha_hostname;
+    let ha_ip           = &cfg.ha_ip;
+    let fan_serial_port = &cfg.fan_serial_port;
+    let fan_temp_warn_c = cfg.fan_temp_warn_c;
+    let fan_temp_crit_c = cfg.fan_temp_crit_c;
 
     Html(format!(r##"<!DOCTYPE html>
 <html lang="en">
@@ -199,6 +213,10 @@ function repoChooser() {{
   * {{ box-sizing: border-box; margin: 0; padding: 0; }}
   body {{ background: #0a0e14; color: #d0e8ff; font-family: monospace; padding: 32px; }}
   h1 {{ color: #00b4d8; letter-spacing: 3px; font-size: 18px; margin-bottom: 24px; }}
+  h2 {{ color: #00b4d8; letter-spacing: 2px; font-size: 13px; margin: 28px 0 14px;
+    padding-bottom: 6px; border-bottom: 1px solid #1e2d4a; }}
+  .field-row {{ display: flex; gap: 12px; }}
+  .field-row > label {{ flex: 1; }}
   form > label {{ display: block; margin-bottom: 16px; }}
   .field-label {{ display: block; color: #3e6ea0; font-size: 12px; letter-spacing: 2px; margin-bottom: 6px; }}
   input, textarea {{ width: 100%; background: #0f1828; border: 1px solid #1e2d4a;
@@ -240,6 +258,8 @@ function repoChooser() {{
 <body>
 <h1>SPACELAB-1 // CONFIG</h1>
 <form method="post" action="/config">
+
+  <h2>GITHUB</h2>
 
   <label>
     <span class="field-label">GITHUB PAT</span>
@@ -305,6 +325,89 @@ function repoChooser() {{
     <input type="number" name="github_poll_secs" value="{poll}" min="30" max="3600">
   </label>
 
+  <h2>VPS / BESZEL</h2>
+
+  <label>
+    <span class="field-label">BESZEL URL</span>
+    <input type="text" name="beszel_url" value="{beszel_url}" placeholder="http://host:8090">
+    <p class="hint">Base URL of the Beszel monitoring instance. Credentials stay in the BESZEL_ADMIN_EMAIL / BESZEL_ADMIN_PASSWORD env vars.</p>
+  </label>
+
+  <label>
+    <span class="field-label">BESZEL SYSTEM NAME</span>
+    <input type="text" name="vps_name" value="{vps_name}" placeholder="spacevps">
+    <p class="hint">System name as registered in Beszel (used to look up the record)</p>
+  </label>
+
+  <div class="field-row">
+    <label>
+      <span class="field-label">VPS HOSTNAME</span>
+      <input type="text" name="vps_hostname" value="{vps_hostname}" placeholder="spacevps">
+    </label>
+    <label>
+      <span class="field-label">VPS IP / ADDRESS</span>
+      <input type="text" name="vps_ip" value="{vps_ip}" placeholder="host.example.net">
+    </label>
+  </div>
+
+  <h2>NETWORK PROBE</h2>
+
+  <div class="field-row">
+    <label>
+      <span class="field-label">PROBE HOST</span>
+      <input type="text" name="probe_host" value="{probe_host}" placeholder="host.example.net">
+    </label>
+    <label>
+      <span class="field-label">PROBE PORT</span>
+      <input type="number" name="probe_port" value="{probe_port}" min="1" max="65535">
+    </label>
+  </div>
+  <p class="hint">A successful TCP connect here lights the LOCAL NETWORK indicator.</p>
+
+  <h2>NAS</h2>
+
+  <div class="field-row">
+    <label>
+      <span class="field-label">NAS HOSTNAME</span>
+      <input type="text" name="nas_hostname" value="{nas_hostname}" placeholder="nas-01">
+    </label>
+    <label>
+      <span class="field-label">NAS IP / ADDRESS</span>
+      <input type="text" name="nas_ip" value="{nas_ip}" placeholder="192.168.1.20">
+    </label>
+  </div>
+
+  <h2>HOME ASSISTANT</h2>
+
+  <div class="field-row">
+    <label>
+      <span class="field-label">HA HOSTNAME</span>
+      <input type="text" name="ha_hostname" value="{ha_hostname}" placeholder="homeassistant.local">
+    </label>
+    <label>
+      <span class="field-label">HA IP / ADDRESS</span>
+      <input type="text" name="ha_ip" value="{ha_ip}" placeholder="192.168.1.30">
+    </label>
+  </div>
+
+  <h2>FAN CONTROLLER</h2>
+
+  <label>
+    <span class="field-label">SERIAL PORT</span>
+    <input type="text" name="fan_serial_port" value="{fan_serial_port}" placeholder="/dev/ttyACM0">
+  </label>
+
+  <div class="field-row">
+    <label>
+      <span class="field-label">TEMP WARN (°C)</span>
+      <input type="number" name="fan_temp_warn_c" value="{fan_temp_warn_c}" min="0" max="120" step="0.5">
+    </label>
+    <label>
+      <span class="field-label">TEMP CRIT (°C)</span>
+      <input type="number" name="fan_temp_crit_c" value="{fan_temp_crit_c}" min="0" max="120" step="0.5">
+    </label>
+  </div>
+
   <button type="submit">SAVE CONFIG</button>
 </form>
 <script type="application/json" id="current-repos">{current_repos_json}</script>
@@ -320,6 +423,24 @@ struct ConfigForm {
     github_username:  String,
     github_repos:     String,
     github_poll_secs: u64,
+
+    beszel_url:    String,
+    vps_name:      String,
+    vps_hostname:  String,
+    vps_ip:        String,
+
+    probe_host:    String,
+    probe_port:    u16,
+
+    nas_hostname:  String,
+    nas_ip:        String,
+
+    ha_hostname:   String,
+    ha_ip:         String,
+
+    fan_serial_port: String,
+    fan_temp_warn_c: f32,
+    fan_temp_crit_c: f32,
 }
 
 async fn save_handler(
@@ -341,12 +462,33 @@ async fn save_handler(
         form.github_username.trim().to_string()
     };
 
+    // web_config_port has no form field — preserve the running value.
+    let web_config_port = config.read().unwrap().web_config_port;
+
     let new_cfg = AppConfig {
         github_pat:       pat,
         github_username:  username,
         github_repos:     repos,
         github_poll_secs: form.github_poll_secs.max(30),
-        web_config_port:  config.read().await.web_config_port,
+        web_config_port,
+
+        beszel_url:    form.beszel_url.trim().trim_end_matches('/').to_string(),
+        vps_name:      form.vps_name.trim().to_string(),
+        vps_hostname:  form.vps_hostname.trim().to_string(),
+        vps_ip:        form.vps_ip.trim().to_string(),
+
+        probe_host:    form.probe_host.trim().to_string(),
+        probe_port:    form.probe_port,
+
+        nas_hostname:  form.nas_hostname.trim().to_string(),
+        nas_ip:        form.nas_ip.trim().to_string(),
+
+        ha_hostname:   form.ha_hostname.trim().to_string(),
+        ha_ip:         form.ha_ip.trim().to_string(),
+
+        fan_serial_port: form.fan_serial_port.trim().to_string(),
+        fan_temp_warn_c: form.fan_temp_warn_c,
+        fan_temp_crit_c: form.fan_temp_crit_c,
     };
 
     if let Err(e) = new_cfg.save() {
@@ -354,6 +496,6 @@ async fn save_handler(
         return StatusCode::INTERNAL_SERVER_ERROR.into_response();
     }
 
-    *config.write().await = new_cfg;
+    *config.write().unwrap() = new_cfg;
     Redirect::to("/").into_response()
 }
