@@ -53,6 +53,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     configure_platform();
 
     let ui = AppWindow::new()?;
+    ui.window().set_fullscreen(true);
 
     // ── Local metrics (Pi) ───────────────────────────────────────────
     let mut collector = MetricsCollector::new();
