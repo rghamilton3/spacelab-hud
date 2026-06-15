@@ -50,18 +50,17 @@ pub struct AppConfig {
     // ── VPS (Beszel monitoring) ───────────────────────────────────────
     /// Base URL of the Beszel instance, e.g. `http://host:8090`.
     pub beszel_url:    String,
-    /// Beszel superuser email used to obtain an API auth token. Shared by all
-    /// monitored systems (they live in one Beszel instance).
+    /// Beszel user email used to obtain an API auth token. A read-only user
+    /// (with the monitored systems shared to it) is sufficient — no superuser
+    /// needed. Shared by all monitored systems (they live in one Beszel
+    /// instance).
     pub beszel_email:    String,
-    /// Beszel superuser password. Stored alongside the other LAN-trusted
-    /// secrets in `config.json` (same model as the GitHub PATs).
+    /// Beszel user password. Stored alongside the other LAN-trusted secrets in
+    /// `config.json` (same model as the GitHub PATs).
     pub beszel_password: String,
-    /// System name as registered in Beszel (used to look up the record).
+    /// System name as registered in Beszel (used to look up the record, and
+    /// shown as the panel's identity — Beszel already knows the host).
     pub vps_name:      String,
-    /// Hostname shown on the VPS panel.
-    pub vps_hostname:  String,
-    /// IP / address shown on the VPS panel.
-    pub vps_ip:        String,
 
     // ── Network reachability probe ────────────────────────────────────
     /// Host the local-network probe connects to.
@@ -72,14 +71,10 @@ pub struct AppConfig {
     // ── NAS panel ─────────────────────────────────────────────────────
     /// System name as registered in Beszel (used to look up the record).
     pub nas_name:      String,
-    pub nas_hostname:  String,
-    pub nas_ip:        String,
 
     // ── Home Assistant panel ──────────────────────────────────────────
     /// System name as registered in Beszel (used to look up the record).
     pub ha_name:       String,
-    pub ha_hostname:   String,
-    pub ha_ip:         String,
 
     // ── Fan controller (USB serial telemetry) ─────────────────────────
     pub fan_serial_port: String,
@@ -108,19 +103,13 @@ impl Default for AppConfig {
             beszel_email:    String::new(),
             beszel_password: String::new(),
             vps_name:      String::new(),
-            vps_hostname:  String::new(),
-            vps_ip:        String::new(),
 
             probe_host:    String::new(),
             probe_port:    22,
 
             nas_name:      String::new(),
-            nas_hostname:  String::new(),
-            nas_ip:        String::new(),
 
             ha_name:       String::new(),
-            ha_hostname:   String::new(),
-            ha_ip:         String::new(),
 
             fan_serial_port: "/dev/ttyACM0".to_string(),
             fan_temp_warn_c: 35.0,

@@ -86,19 +86,18 @@ export component HaHealthScreen {
 
         Rectangle { height: 1px; background: Theme.border; }
 
-        GridLayout {
+        VerticalLayout {
             padding: 10px;
             spacing: 7px;
 
-            Row {
-                MetricCard { label: "HOSTNAME";   value: root.metrics.hostname; }
-                MetricCard { label: "IP ADDRESS"; value: root.metrics.ip-addr; }
-            }
-            Row {
+            MetricCard { label: "SYSTEM"; value: root.metrics.hostname; }
+            HorizontalLayout {
+                spacing: 7px;
                 MetricCard { label: "UPTIME";   value: root.metrics.uptime; }
                 MetricCard { label: "LOAD AVG"; value: root.metrics.load-avg; }
             }
-            Row {
+            HorizontalLayout {
+                spacing: 7px;
                 MetricBarCard {
                     label:     "CPU USAGE";
                     value:     root.metrics.cpu-usage;
@@ -114,7 +113,8 @@ export component HaHealthScreen {
                     danger-at: 0.88;
                 }
             }
-            Row {
+            HorizontalLayout {
+                spacing: 7px;
                 MetricBarCard {
                     label:     "MEMORY";
                     value:     root.metrics.ram;

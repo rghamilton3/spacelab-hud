@@ -9,7 +9,7 @@ const TIMEOUT: Duration = Duration::from_secs(5);
 /// URL means that when an operator points the config at a different Beszel
 /// instance, the stale token is discarded up front rather than tried, 401'd,
 /// and refreshed — which would otherwise blank all three panels for one cycle.
-static AUTH_TOKEN: Mutex<Option<(String, String)>> = Mutex::new(None);
+static AUTH_TOKEN: Mutex<Option<(String, String, String)>> = Mutex::new(None);
 
 // ── Public types ──────────────────────────────────────────────────────
 
@@ -21,16 +21,15 @@ static AUTH_TOKEN: Mutex<Option<(String, String)>> = Mutex::new(None);
 pub struct BeszelTarget {
     /// Base URL of the Beszel instance, e.g. `http://host:8090`.
     pub beszel_url:  String,
-    /// Beszel superuser email used to obtain an API auth token.
+    /// Beszel user email used to obtain an API auth token. A read-only user
+    /// with the monitored systems shared to it is sufficient.
     pub email:       String,
-    /// Beszel superuser password.
+    /// Beszel user password.
     pub password:    String,
-    /// System name as registered in Beszel.
+    /// System name as registered in Beszel. Also shown on the panel as its
+    /// identity — Beszel already knows the host, so there's no separately
+    /// configured hostname/IP to display.
     pub system_name: String,
-    /// Hostname shown on the panel.
-    pub hostname:    String,
-    /// IP / address shown on the panel.
-    pub ip:          String,
 }
 
 impl BeszelTarget {
@@ -40,8 +39,6 @@ impl BeszelTarget {
             email:       cfg.beszel_email.clone(),
             password:    cfg.beszel_password.clone(),
             system_name: cfg.vps_name.clone(),
-            hostname:    cfg.vps_hostname.clone(),
-            ip:          cfg.vps_ip.clone(),
         }
     }
 
@@ -51,8 +48,6 @@ impl BeszelTarget {
             email:       cfg.beszel_email.clone(),
             password:    cfg.beszel_password.clone(),
             system_name: cfg.nas_name.clone(),
-            hostname:    cfg.nas_hostname.clone(),
-            ip:          cfg.nas_ip.clone(),
         }
     }
 
@@ -62,8 +57,6 @@ impl BeszelTarget {
             email:       cfg.beszel_email.clone(),
             password:    cfg.beszel_password.clone(),
             system_name: cfg.ha_name.clone(),
-            hostname:    cfg.ha_hostname.clone(),
-            ip:          cfg.ha_ip.clone(),
         }
     }
 }
@@ -77,10 +70,9 @@ pub struct RemoteAlert {
 
 // ── ServiceMetrics constructors ───────────────────────────────────────
 
-pub fn offline_metrics(hostname: &str, ip_addr: &str) -> crate::ServiceMetrics {
+pub fn offline_metrics(system: &str) -> crate::ServiceMetrics {
     crate::ServiceMetrics {
-        hostname:  hostname.into(),
-        ip_addr:   ip_addr.into(),
+        hostname:  system.into(),
         reachable: false,
         uptime:    "—".into(),
         load_avg:  "—  —  —".into(),
@@ -95,11 +87,10 @@ pub fn offline_metrics(hostname: &str, ip_addr: &str) -> crate::ServiceMetrics {
     }
 }
 
-fn online_no_metrics(hostname: &str, ip_addr: &str) -> crate::ServiceMetrics {
+fn online_no_metrics(system: &str) -> crate::ServiceMetrics {
     crate::ServiceMetrics {
         reachable: true,
-        hostname:  hostname.into(),
-        ip_addr:   ip_addr.into(),
+        hostname:  system.into(),
         uptime:    "—".into(),
         load_avg:  "—  —  —".into(),
         cpu_usage: "—".into(),
@@ -124,8 +115,11 @@ fn invalidate_token() {
 fn get_or_refresh_token(beszel_url: &str, email: &str, password: &str) -> Option<String> {
     {
         let guard = AUTH_TOKEN.lock().ok()?;
-        if let Some((url, token)) = guard.as_ref() {
-            if url == beszel_url {
+        if let Some((url, cached_email, token)) = guard.as_ref() {
+            // Key on (url, email) so reconfiguring to different credentials on
+            // the same hub — e.g. swapping a superuser login for a read-only
+            // user — forces a fresh auth instead of reusing the stale token.
+            if url == beszel_url && cached_email == email {
                 return Some(token.clone());
             }
         }
@@ -138,8 +132,11 @@ fn get_or_refresh_token(beszel_url: &str, email: &str, password: &str) -> Option
     #[derive(Deserialize)]
     struct AuthResp { token: String }
 
+    // Authenticate as a regular Beszel user (the `users` collection), not a
+    // superuser — read-only status polling only needs a user the systems have
+    // been shared with, so there's no reason to hand the HUD admin rights.
     let resp = ureq::post(&format!(
-        "{}/api/collections/_superusers/auth-with-password",
+        "{}/api/collections/users/auth-with-password",
         beszel_url
     ))
     .timeout(TIMEOUT)
@@ -149,7 +146,7 @@ fn get_or_refresh_token(beszel_url: &str, email: &str, password: &str) -> Option
     let body: AuthResp = resp.into_json().ok()?;
 
     let mut guard = AUTH_TOKEN.lock().ok()?;
-    *guard = Some((beszel_url.to_string(), body.token.clone()));
+    *guard = Some((beszel_url.to_string(), email.to_string(), body.token.clone()));
     Some(body.token)
 }
 
@@ -301,11 +298,11 @@ impl BeszelTarget {
             || self.email.is_empty()
             || self.password.is_empty()
         {
-            return offline_metrics(&self.hostname, &self.ip);
+            return offline_metrics(&self.system_name);
         }
 
         if !hub_alive {
-            return offline_metrics(&self.hostname, &self.ip);
+            return offline_metrics(&self.system_name);
         }
 
         let m = match fetch_beszel_metrics(
@@ -315,7 +312,7 @@ impl BeszelTarget {
             &self.password,
         ) {
             Some(m) => m,
-            None    => return online_no_metrics(&self.hostname, &self.ip),
+            None    => return online_no_metrics(&self.system_name),
         };
 
         let load1  = m.load.first()  .copied().unwrap_or(0.0);
@@ -323,8 +320,7 @@ impl BeszelTarget {
         let load15 = m.load.get(2)   .copied().unwrap_or(0.0);
 
         crate::ServiceMetrics {
-            hostname:  self.hostname.as_str().into(),
-            ip_addr:   self.ip.as_str().into(),
+            hostname:  self.system_name.as_str().into(),
             reachable: true,
             uptime:    fmt_uptime(m.uptime_secs).into(),
             load_avg:  format!("{:.2}  {:.2}  {:.2}", load1, load5, load15).into(),

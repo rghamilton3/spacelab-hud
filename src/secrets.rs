@@ -1,5 +1,5 @@
 //! Transparent at-rest encryption for the handful of secret config fields
-//! (the Beszel admin password and the GitHub PATs).
+//! (the Beszel user password and the GitHub PATs).
 //!
 //! Secrets are held in plaintext in memory but encrypted before they touch
 //! disk. The symmetric data key lives in its own `0600` file under the state
