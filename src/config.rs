@@ -3,6 +3,22 @@ use std::sync::{Arc, RwLock};
 
 use serde::{Deserialize, Serialize};
 
+/// A single GitHub credential and the repos it watches.
+///
+/// One source maps to one resource owner: a fine-grained PAT is scoped to a
+/// single org (or your personal account), so watching repos across multiple
+/// orgs requires one source per org. Each source carries its own `username`
+/// (the login the PAT authenticates as) so per-repo "is this my activity?"
+/// filtering stays correct even when sources belong to different accounts.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct GithubSource {
+    pub pat:      String,
+    #[serde(default)]
+    pub username: String,
+    #[serde(default)]
+    pub repos:    Vec<String>,
+}
+
 /// Application configuration, persisted to `~/.config/spacelab-hud/config.json`
 /// and editable live via the web config server.
 ///
@@ -13,10 +29,20 @@ use serde::{Deserialize, Serialize};
 #[serde(default)]
 pub struct AppConfig {
     // ── GitHub ────────────────────────────────────────────────────────
-    pub github_pat:       String,
-    pub github_username:  String,
-    pub github_repos:     Vec<String>,
+    /// One credential per resource owner (org / account). See [`GithubSource`].
+    pub github_sources:   Vec<GithubSource>,
     pub github_poll_secs: u64,
+
+    // ── Legacy single-credential GitHub fields ────────────────────────
+    // Retained only so pre-multi-source `config.json` files deserialize and
+    // fold into `github_sources` on load (see [`AppConfig::migrate`]). They are
+    // never written back out, so a saved config drops them permanently.
+    #[serde(default, rename = "github_pat", skip_serializing)]
+    legacy_github_pat:      String,
+    #[serde(default, rename = "github_username", skip_serializing)]
+    legacy_github_username: String,
+    #[serde(default, rename = "github_repos", skip_serializing)]
+    legacy_github_repos:    Vec<String>,
 
     // ── Web config server ─────────────────────────────────────────────
     pub web_config_port:  u16,
@@ -56,10 +82,12 @@ pub struct AppConfig {
 impl Default for AppConfig {
     fn default() -> Self {
         Self {
-            github_pat:       String::new(),
-            github_username:  String::new(),
-            github_repos:     vec![],
+            github_sources:   vec![],
             github_poll_secs: 60,
+
+            legacy_github_pat:      String::new(),
+            legacy_github_username: String::new(),
+            legacy_github_repos:    vec![],
 
             web_config_port:  80,
 
@@ -97,10 +125,25 @@ impl AppConfig {
 
     pub fn load() -> Self {
         let path = Self::config_path();
-        std::fs::read_to_string(&path)
+        let mut cfg: Self = std::fs::read_to_string(&path)
             .ok()
             .and_then(|s| serde_json::from_str(&s).ok())
-            .unwrap_or_default()
+            .unwrap_or_default();
+        cfg.migrate();
+        cfg
+    }
+
+    /// Folds a legacy single-credential config (pre-multi-source) into the
+    /// first `github_sources` entry. A no-op once `github_sources` is populated
+    /// or no legacy PAT is present, so it is safe to call on every load.
+    fn migrate(&mut self) {
+        if self.github_sources.is_empty() && !self.legacy_github_pat.is_empty() {
+            self.github_sources.push(GithubSource {
+                pat:      std::mem::take(&mut self.legacy_github_pat),
+                username: std::mem::take(&mut self.legacy_github_username),
+                repos:    std::mem::take(&mut self.legacy_github_repos),
+            });
+        }
     }
 
     pub fn save(&self) -> anyhow::Result<()> {
@@ -110,7 +153,9 @@ impl AppConfig {
     }
 
     pub fn is_configured(&self) -> bool {
-        !self.github_pat.is_empty() && !self.github_repos.is_empty()
+        self.github_sources
+            .iter()
+            .any(|s| !s.pat.is_empty() && !s.repos.is_empty())
     }
 }
 
@@ -118,4 +163,60 @@ pub type ConfigRef = Arc<RwLock<AppConfig>>;
 
 pub fn new_config_ref(cfg: AppConfig) -> ConfigRef {
     Arc::new(RwLock::new(cfg))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn load_str(json: &str) -> AppConfig {
+        let mut cfg: AppConfig = serde_json::from_str(json).unwrap();
+        cfg.migrate();
+        cfg
+    }
+
+    #[test]
+    fn legacy_config_migrates_into_one_source() {
+        let cfg = load_str(
+            r#"{ "github_pat": "ghp_x", "github_username": "alice",
+                 "github_repos": ["alice/a", "alice/b"], "github_poll_secs": 90 }"#,
+        );
+        assert_eq!(cfg.github_sources.len(), 1);
+        let src = &cfg.github_sources[0];
+        assert_eq!(src.pat, "ghp_x");
+        assert_eq!(src.username, "alice");
+        assert_eq!(src.repos, vec!["alice/a", "alice/b"]);
+        assert_eq!(cfg.github_poll_secs, 90);
+        assert!(cfg.is_configured());
+    }
+
+    #[test]
+    fn multi_source_config_skips_migration() {
+        let cfg = load_str(
+            r#"{ "github_sources": [
+                   { "pat": "ghp_1", "username": "alice", "repos": ["org1/a"] },
+                   { "pat": "ghp_2", "username": "alice", "repos": ["org2/b"] }
+                 ] }"#,
+        );
+        assert_eq!(cfg.github_sources.len(), 2);
+        assert_eq!(cfg.github_sources[1].repos, vec!["org2/b"]);
+    }
+
+    #[test]
+    fn saved_config_drops_legacy_fields() {
+        // A migrated config, once serialized, must not re-emit the legacy keys —
+        // otherwise the next load would resurrect them.
+        let cfg = load_str(r#"{ "github_pat": "ghp_x", "github_repos": ["alice/a"] }"#);
+        let json = serde_json::to_string(&cfg).unwrap();
+        assert!(!json.contains("github_pat"));
+        assert!(!json.contains("github_repos\""));
+        assert!(json.contains("github_sources"));
+    }
+
+    #[test]
+    fn empty_legacy_pat_yields_no_source() {
+        let cfg = load_str(r#"{ "github_repos": ["alice/a"] }"#);
+        assert!(cfg.github_sources.is_empty());
+        assert!(!cfg.is_configured());
+    }
 }
