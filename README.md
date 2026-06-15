@@ -28,9 +28,9 @@ Everything is configured at runtime through the web config UI — no rebuild and
 | Section | Fields |
 | --- | --- |
 | **GitHub** | One source per org/account: a PAT (fine-grained recommended — the page lists the exact read-only permissions), an optional username (distinguishes your activity in the feed), and the repos to watch (picked from a live list or added manually as `owner/repo`). Plus a global poll interval (seconds, min 30). |
-| **VPS / Beszel** | Base URL of your [Beszel](https://beszel.dev/) instance, the admin email + password used to obtain an API token, and the VPS system name / hostname / IP. |
+| **VPS / Beszel** | Base URL of your [Beszel](https://beszel.dev/) instance, the PocketBase superuser email + password used to obtain an API token (not your OAuth/SSO login — OAuth applies to the `users` collection only), and the VPS system name. The system name doubles as the panel's identity, so there's no separate hostname/IP to enter. |
 | **Network probe** | Host and TCP port that the local-network reachability indicator connects to. |
-| **NAS** and **Home Assistant** | The Beszel system name for each (they share the one Beszel instance above), plus hostname / IP. Leave a system name blank to keep that panel offline. |
+| **NAS** and **Home Assistant** | The Beszel system name for each (they share the one Beszel instance above). Leave a system name blank to keep that panel offline. |
 | **Fan controller** | USB serial port and the rack-temperature warn / critical thresholds (°C). |
 
 All monitored systems (VPS, NAS, Home Assistant) read from the **same** Beszel instance, differing only by system name — so the Beszel URL and admin credentials are entered once.

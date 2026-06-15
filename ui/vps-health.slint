@@ -93,8 +93,7 @@ export component VpsHealthScreen {
             spacing: 7px;
 
             Row {
-                MetricCard { label: "HOSTNAME";   value: root.metrics.hostname; }
-                MetricCard { label: "IP ADDRESS"; value: root.metrics.ip-addr; }
+                MetricCard { label: "SYSTEM"; value: root.metrics.hostname; }
             }
             Row {
                 MetricCard { label: "UPTIME";   value: root.metrics.uptime; }

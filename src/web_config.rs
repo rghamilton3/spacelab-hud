@@ -170,16 +170,10 @@ async fn ui_handler(State(config): State<ConfigRef>) -> impl IntoResponse {
     // placeholder can say "leave blank to keep current" instead of echoing it.
     let beszel_pw_set   = if cfg.beszel_password.is_empty() { "" } else { "saved — leave blank to keep" };
     let vps_name        = esc(&cfg.vps_name);
-    let vps_hostname    = esc(&cfg.vps_hostname);
-    let vps_ip          = esc(&cfg.vps_ip);
     let probe_host      = esc(&cfg.probe_host);
     let probe_port      = cfg.probe_port;
     let nas_name        = esc(&cfg.nas_name);
-    let nas_hostname    = esc(&cfg.nas_hostname);
-    let nas_ip          = esc(&cfg.nas_ip);
     let ha_name         = esc(&cfg.ha_name);
-    let ha_hostname     = esc(&cfg.ha_hostname);
-    let ha_ip           = esc(&cfg.ha_ip);
     let fan_serial_port = esc(&cfg.fan_serial_port);
     let fan_temp_warn_c = cfg.fan_temp_warn_c;
     let fan_temp_crit_c = cfg.fan_temp_crit_c;
@@ -413,26 +407,15 @@ function configApp() {{
     <label>
       <span class="field-label">BESZEL ADMIN PASSWORD</span>
       <input type="password" name="beszel_password" value="" placeholder="{beszel_pw_set}" autocomplete="off">
-      <p class="hint">Superuser credentials used to obtain an API token. Leave password blank to keep the stored one.</p>
+      <p class="hint">PocketBase <b>superuser</b> credentials (set via the <code>superuser</code> CLI) used to obtain an API token — <b>not</b> your OAuth/SSO web login. OAuth applies to the <code>users</code> collection only and doesn't affect this. Leave password blank to keep the stored one.</p>
     </label>
   </div>
 
   <label>
     <span class="field-label">BESZEL SYSTEM NAME</span>
     <input type="text" name="vps_name" value="{vps_name}" placeholder="spacevps">
-    <p class="hint">System name as registered in Beszel (used to look up the record)</p>
+    <p class="hint">System name as registered in Beszel (used to look up the record, and shown on the panel — Beszel already knows the host)</p>
   </label>
-
-  <div class="field-row">
-    <label>
-      <span class="field-label">VPS HOSTNAME</span>
-      <input type="text" name="vps_hostname" value="{vps_hostname}" placeholder="spacevps">
-    </label>
-    <label>
-      <span class="field-label">VPS IP / ADDRESS</span>
-      <input type="text" name="vps_ip" value="{vps_ip}" placeholder="host.example.net">
-    </label>
-  </div>
 
   <h2>NETWORK PROBE</h2>
 
@@ -456,17 +439,6 @@ function configApp() {{
     <p class="hint">System name as registered in the same Beszel instance. Leave blank to keep the panel offline.</p>
   </label>
 
-  <div class="field-row">
-    <label>
-      <span class="field-label">NAS HOSTNAME</span>
-      <input type="text" name="nas_hostname" value="{nas_hostname}" placeholder="nas-01">
-    </label>
-    <label>
-      <span class="field-label">NAS IP / ADDRESS</span>
-      <input type="text" name="nas_ip" value="{nas_ip}" placeholder="192.168.1.20">
-    </label>
-  </div>
-
   <h2>HOME ASSISTANT</h2>
 
   <label>
@@ -474,17 +446,6 @@ function configApp() {{
     <input type="text" name="ha_name" value="{ha_name}" placeholder="homeassistant">
     <p class="hint">System name as registered in the same Beszel instance. Leave blank to keep the panel offline.</p>
   </label>
-
-  <div class="field-row">
-    <label>
-      <span class="field-label">HA HOSTNAME</span>
-      <input type="text" name="ha_hostname" value="{ha_hostname}" placeholder="homeassistant.local">
-    </label>
-    <label>
-      <span class="field-label">HA IP / ADDRESS</span>
-      <input type="text" name="ha_ip" value="{ha_ip}" placeholder="192.168.1.30">
-    </label>
-  </div>
 
   <h2>FAN CONTROLLER</h2>
 
@@ -523,19 +484,13 @@ struct ConfigForm {
     beszel_email:    String,
     beszel_password: String,
     vps_name:      String,
-    vps_hostname:  String,
-    vps_ip:        String,
 
     probe_host:    String,
     probe_port:    u16,
 
     nas_name:      String,
-    nas_hostname:  String,
-    nas_ip:        String,
 
     ha_name:       String,
-    ha_hostname:   String,
-    ha_ip:         String,
 
     fan_serial_port: String,
     fan_temp_warn_c: f32,
@@ -585,20 +540,14 @@ async fn save_handler(
     if !beszel_password.is_empty() {
         new_cfg.beszel_password = beszel_password.to_string();
     }
-    new_cfg.vps_name     = form.vps_name.trim().to_string();
-    new_cfg.vps_hostname = form.vps_hostname.trim().to_string();
-    new_cfg.vps_ip       = form.vps_ip.trim().to_string();
+    new_cfg.vps_name = form.vps_name.trim().to_string();
 
     new_cfg.probe_host = form.probe_host.trim().to_string();
     new_cfg.probe_port = form.probe_port;
 
-    new_cfg.nas_name     = form.nas_name.trim().to_string();
-    new_cfg.nas_hostname = form.nas_hostname.trim().to_string();
-    new_cfg.nas_ip       = form.nas_ip.trim().to_string();
+    new_cfg.nas_name = form.nas_name.trim().to_string();
 
-    new_cfg.ha_name     = form.ha_name.trim().to_string();
-    new_cfg.ha_hostname = form.ha_hostname.trim().to_string();
-    new_cfg.ha_ip       = form.ha_ip.trim().to_string();
+    new_cfg.ha_name = form.ha_name.trim().to_string();
 
     new_cfg.fan_serial_port = form.fan_serial_port.trim().to_string();
     // Keep warn <= crit so the threshold branches in fan_telem.rs can't

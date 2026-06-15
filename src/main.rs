@@ -67,8 +67,8 @@ fn main() -> Result<(), Box<dyn Error>> {
     // ── NAS + Home Assistant — start offline ─────────────────────────
     {
         let cfg = cfg_ref.read().unwrap();
-        ui.set_nas_metrics(remote_metrics::offline_metrics(&cfg.nas_hostname, &cfg.nas_ip));
-        ui.set_ha_metrics(remote_metrics::offline_metrics(&cfg.ha_hostname, &cfg.ha_ip));
+        ui.set_nas_metrics(remote_metrics::offline_metrics(&cfg.nas_name));
+        ui.set_ha_metrics(remote_metrics::offline_metrics(&cfg.ha_name));
     }
 
     // ── GitHub initial state — "not configured" until watcher runs ───

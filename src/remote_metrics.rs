@@ -25,12 +25,10 @@ pub struct BeszelTarget {
     pub email:       String,
     /// Beszel superuser password.
     pub password:    String,
-    /// System name as registered in Beszel.
+    /// System name as registered in Beszel. Also shown on the panel as its
+    /// identity — Beszel already knows the host, so there's no separately
+    /// configured hostname/IP to display.
     pub system_name: String,
-    /// Hostname shown on the panel.
-    pub hostname:    String,
-    /// IP / address shown on the panel.
-    pub ip:          String,
 }
 
 impl BeszelTarget {
@@ -40,8 +38,6 @@ impl BeszelTarget {
             email:       cfg.beszel_email.clone(),
             password:    cfg.beszel_password.clone(),
             system_name: cfg.vps_name.clone(),
-            hostname:    cfg.vps_hostname.clone(),
-            ip:          cfg.vps_ip.clone(),
         }
     }
 
@@ -51,8 +47,6 @@ impl BeszelTarget {
             email:       cfg.beszel_email.clone(),
             password:    cfg.beszel_password.clone(),
             system_name: cfg.nas_name.clone(),
-            hostname:    cfg.nas_hostname.clone(),
-            ip:          cfg.nas_ip.clone(),
         }
     }
 
@@ -62,8 +56,6 @@ impl BeszelTarget {
             email:       cfg.beszel_email.clone(),
             password:    cfg.beszel_password.clone(),
             system_name: cfg.ha_name.clone(),
-            hostname:    cfg.ha_hostname.clone(),
-            ip:          cfg.ha_ip.clone(),
         }
     }
 }
@@ -77,10 +69,9 @@ pub struct RemoteAlert {
 
 // ── ServiceMetrics constructors ───────────────────────────────────────
 
-pub fn offline_metrics(hostname: &str, ip_addr: &str) -> crate::ServiceMetrics {
+pub fn offline_metrics(system: &str) -> crate::ServiceMetrics {
     crate::ServiceMetrics {
-        hostname:  hostname.into(),
-        ip_addr:   ip_addr.into(),
+        hostname:  system.into(),
         reachable: false,
         uptime:    "—".into(),
         load_avg:  "—  —  —".into(),
@@ -95,11 +86,10 @@ pub fn offline_metrics(hostname: &str, ip_addr: &str) -> crate::ServiceMetrics {
     }
 }
 
-fn online_no_metrics(hostname: &str, ip_addr: &str) -> crate::ServiceMetrics {
+fn online_no_metrics(system: &str) -> crate::ServiceMetrics {
     crate::ServiceMetrics {
         reachable: true,
-        hostname:  hostname.into(),
-        ip_addr:   ip_addr.into(),
+        hostname:  system.into(),
         uptime:    "—".into(),
         load_avg:  "—  —  —".into(),
         cpu_usage: "—".into(),
@@ -301,11 +291,11 @@ impl BeszelTarget {
             || self.email.is_empty()
             || self.password.is_empty()
         {
-            return offline_metrics(&self.hostname, &self.ip);
+            return offline_metrics(&self.system_name);
         }
 
         if !hub_alive {
-            return offline_metrics(&self.hostname, &self.ip);
+            return offline_metrics(&self.system_name);
         }
 
         let m = match fetch_beszel_metrics(
@@ -315,7 +305,7 @@ impl BeszelTarget {
             &self.password,
         ) {
             Some(m) => m,
-            None    => return online_no_metrics(&self.hostname, &self.ip),
+            None    => return online_no_metrics(&self.system_name),
         };
 
         let load1  = m.load.first()  .copied().unwrap_or(0.0);
@@ -323,8 +313,7 @@ impl BeszelTarget {
         let load15 = m.load.get(2)   .copied().unwrap_or(0.0);
 
         crate::ServiceMetrics {
-            hostname:  self.hostname.as_str().into(),
-            ip_addr:   self.ip.as_str().into(),
+            hostname:  self.system_name.as_str().into(),
             reachable: true,
             uptime:    fmt_uptime(m.uptime_secs).into(),
             load_avg:  format!("{:.2}  {:.2}  {:.2}", load1, load5, load15).into(),
