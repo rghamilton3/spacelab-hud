@@ -15,6 +15,7 @@
 //! deliberately small ([`load_or_create_key`]) so it can later be swapped for a
 //! TPM-sealed key without disturbing the call sites in `config.rs`.
 
+use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
 
@@ -37,7 +38,20 @@ const B64: base64::engine::general_purpose::GeneralPurpose =
 
 // ── Key storage ───────────────────────────────────────────────────────
 
+/// Test-only override for the state dir, so the disk round-trip test can point
+/// the key file at a temp dir without mutating process-wide env vars (which is
+/// unsound across the parallel test harness). A thread-safe `OnceLock` set once
+/// before any cipher init.
+#[cfg(test)]
+pub(crate) static TEST_STATE_DIR: OnceLock<PathBuf> = OnceLock::new();
+
 fn state_dir() -> PathBuf {
+    #[cfg(test)]
+    {
+        if let Some(dir) = TEST_STATE_DIR.get() {
+            return dir.clone();
+        }
+    }
     let base = std::env::var("XDG_STATE_HOME")
         .ok()
         .filter(|s| !s.is_empty())
@@ -82,18 +96,49 @@ fn load_or_create_key() -> Result<[u8; 32]> {
             .with_context(|| format!("creating state dir {}", dir.display()))?;
         restrict_dir_perms(dir);
     }
-    std::fs::write(&path, key)
-        .with_context(|| format!("writing secret key {}", path.display()))?;
-    restrict_file_perms(&path);
-    Ok(key)
+
+    // Create the file with `0600` from the first inode write (via `create_new`
+    // + `mode`), closing the window between a default-umask create and a later
+    // chmod where the raw key could be world-readable. `create_new` also makes
+    // first-run racy-safe: if a concurrent process wins, we fall through to
+    // reading its key rather than clobbering it.
+    match create_key_file(&path) {
+        Ok(mut file) => {
+            file.write_all(&key)
+                .with_context(|| format!("writing secret key {}", path.display()))?;
+            Ok(key)
+        }
+        Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
+            let bytes = std::fs::read(&path)
+                .with_context(|| format!("reading secret key {}", path.display()))?;
+            bytes.as_slice().try_into().map_err(|_| {
+                anyhow!(
+                    "secret key at {} is malformed ({} bytes, expected 32)",
+                    path.display(),
+                    bytes.len()
+                )
+            })
+        }
+        Err(e) => Err(e).with_context(|| format!("creating secret key {}", path.display())),
+    }
 }
 
 #[cfg(unix)]
-fn restrict_file_perms(path: &Path) {
-    use std::os::unix::fs::PermissionsExt;
-    if let Err(e) = std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600)) {
-        eprintln!("secrets: failed to chmod 600 {}: {e}", path.display());
-    }
+fn create_key_file(path: &Path) -> std::io::Result<std::fs::File> {
+    use std::os::unix::fs::OpenOptionsExt;
+    std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .mode(0o600)
+        .open(path)
+}
+
+#[cfg(not(unix))]
+fn create_key_file(path: &Path) -> std::io::Result<std::fs::File> {
+    std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(path)
 }
 
 #[cfg(unix)]
@@ -104,8 +149,6 @@ fn restrict_dir_perms(path: &Path) {
     }
 }
 
-#[cfg(not(unix))]
-fn restrict_file_perms(_path: &Path) {}
 #[cfg(not(unix))]
 fn restrict_dir_perms(_path: &Path) {}
 

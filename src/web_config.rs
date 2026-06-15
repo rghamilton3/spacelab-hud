@@ -156,10 +156,13 @@ async fn ui_handler(State(config): State<ConfigRef>) -> impl IntoResponse {
     // Escape every user-controlled string before it lands in an HTML attribute.
     let poll = cfg.github_poll_secs;
     // Seed the per-source chooser. Embedded in a <script type="application/json">
-    // block (not an attribute), so JSON encoding of the quotes is the escaping;
-    // PATs and `owner/repo` names contain no `<`, so no `</script>` breakout.
+    // block (not an attribute), so JSON encoding of the quotes is the escaping.
+    // serde_json doesn't escape `/`, so defensively neutralize any `</script>`
+    // breakout: GitHub PATs can't contain it today, but a hand-edited config
+    // could. `<\/` is a valid JSON escape that JSON.parse restores to `</`.
     let sources_json = serde_json::to_string(&cfg.github_sources)
-        .unwrap_or_else(|_| "[]".to_string());
+        .unwrap_or_else(|_| "[]".to_string())
+        .replace("</", "<\\/");
 
     let beszel_url      = esc(&cfg.beszel_url);
     let beszel_email    = esc(&cfg.beszel_email);

@@ -130,11 +130,11 @@ impl Default for AppConfig {
 }
 
 impl AppConfig {
+    /// Path to `config.json`. A pure computation — no I/O — so callers (and
+    /// tests) can rely on it not creating directories as a side effect. The
+    /// containing dir is created in [`save`](Self::save), the only writer.
     pub fn config_path() -> PathBuf {
-        let home = std::env::var("HOME").unwrap_or_else(|_| ".".to_string());
-        let dir  = PathBuf::from(home).join(".config/spacelab-hud");
-        std::fs::create_dir_all(&dir).ok();
-        dir.join("config.json")
+        config_dir().join("config.json")
     }
 
     pub fn load() -> Self {
@@ -193,6 +193,9 @@ impl AppConfig {
         to_store.encrypt_secrets()?;
         let json = serde_json::to_string_pretty(&to_store)?;
         let path = Self::config_path();
+        if let Some(dir) = path.parent() {
+            std::fs::create_dir_all(dir)?;
+        }
         std::fs::write(&path, json)?;
         restrict_config_perms(&path);
         Ok(())
@@ -203,6 +206,24 @@ impl AppConfig {
             .iter()
             .any(|s| !s.pat.is_empty() && !s.repos.is_empty())
     }
+}
+
+/// Test-only override for the config dir, so the disk round-trip test can use
+/// a temp dir without mutating process-wide `HOME` (unsound across the parallel
+/// test harness). Paired with [`crate::secrets::TEST_STATE_DIR`].
+#[cfg(test)]
+pub(crate) static TEST_CONFIG_DIR: std::sync::OnceLock<PathBuf> = std::sync::OnceLock::new();
+
+/// Directory holding `config.json`. Pure (no I/O); see [`AppConfig::config_path`].
+fn config_dir() -> PathBuf {
+    #[cfg(test)]
+    {
+        if let Some(dir) = TEST_CONFIG_DIR.get() {
+            return dir.clone();
+        }
+    }
+    let home = std::env::var("HOME").unwrap_or_else(|_| ".".to_string());
+    PathBuf::from(home).join(".config/spacelab-hud")
 }
 
 /// Decrypts a secret field in place, leaving plaintext untouched (migration)
@@ -303,16 +324,19 @@ mod tests {
     }
 
     /// Full boundary round-trip: secrets must land on disk as ciphertext yet
-    /// come back as plaintext through `load`. Points HOME / XDG_STATE_HOME at a
-    /// unique temp dir so the real `config_path` / key file are exercised
-    /// without touching the developer's actual config. This is the only test
-    /// that mutates those env vars, so parallel runs don't collide.
+    /// come back as plaintext through `load`. Points the config dir and key
+    /// file at a unique temp dir via the test-only `OnceLock` overrides, so the
+    /// real `config_path` / key file are exercised without mutating
+    /// process-wide env vars. This is the only test that initializes the global
+    /// cipher, so the temp-dir key it installs can't bleed into other tests.
     #[test]
     fn secrets_round_trip_through_disk() {
         let tmp = std::env::temp_dir().join(format!("slhud-cfg-test-{}", std::process::id()));
         std::fs::create_dir_all(&tmp).unwrap();
-        std::env::set_var("HOME", &tmp);
-        std::env::set_var("XDG_STATE_HOME", tmp.join("state"));
+        TEST_CONFIG_DIR.set(tmp.join("config")).expect("config dir set once");
+        crate::secrets::TEST_STATE_DIR
+            .set(tmp.join("state"))
+            .expect("state dir set once");
 
         let cfg = AppConfig {
             beszel_password: "hunter2".to_string(),

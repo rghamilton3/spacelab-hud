@@ -150,10 +150,13 @@ fn main() -> Result<(), Box<dyn Error>> {
             )
         };
         let (vps, nas, ha, sys_alerts) = match std::panic::catch_unwind(|| {
+            // All three targets share one Beszel hub; probe its health once and
+            // reuse the result rather than each target re-checking it.
+            let hub_alive = remote_metrics::beszel_alive(&vps_target.beszel_url);
             (
-                vps_target.fetch(),
-                nas_target.fetch(),
-                ha_target.fetch(),
+                vps_target.fetch_assuming_alive(hub_alive),
+                nas_target.fetch_assuming_alive(hub_alive),
+                ha_target.fetch_assuming_alive(hub_alive),
                 remote_metrics::RemoteAlert::fetch_all(),
             )
         }) {

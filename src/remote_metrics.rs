@@ -5,7 +5,11 @@ use serde::Deserialize;
 
 const TIMEOUT: Duration = Duration::from_secs(5);
 
-static AUTH_TOKEN: Mutex<Option<String>> = Mutex::new(None);
+/// Cached Beszel auth token, keyed on the URL it was issued for. Keying on the
+/// URL means that when an operator points the config at a different Beszel
+/// instance, the stale token is discarded up front rather than tried, 401'd,
+/// and refreshed — which would otherwise blank all three panels for one cycle.
+static AUTH_TOKEN: Mutex<Option<(String, String)>> = Mutex::new(None);
 
 // ── Public types ──────────────────────────────────────────────────────
 
@@ -120,8 +124,10 @@ fn invalidate_token() {
 fn get_or_refresh_token(beszel_url: &str, email: &str, password: &str) -> Option<String> {
     {
         let guard = AUTH_TOKEN.lock().ok()?;
-        if let Some(t) = guard.as_ref() {
-            return Some(t.clone());
+        if let Some((url, token)) = guard.as_ref() {
+            if url == beszel_url {
+                return Some(token.clone());
+            }
         }
     }
 
@@ -143,13 +149,30 @@ fn get_or_refresh_token(beszel_url: &str, email: &str, password: &str) -> Option
     let body: AuthResp = resp.into_json().ok()?;
 
     let mut guard = AUTH_TOKEN.lock().ok()?;
-    *guard = Some(body.token.clone());
+    *guard = Some((beszel_url.to_string(), body.token.clone()));
     Some(body.token)
 }
 
 // ── Beszel API ────────────────────────────────────────────────────────
 
-fn beszel_alive(beszel_url: &str) -> bool {
+/// Percent-encodes a value for safe interpolation into a query string,
+/// escaping everything outside the RFC 3986 unreserved set. Keeps a Beszel
+/// system name containing `&`, `%`, or `"` from corrupting the `filter=`
+/// expression. Kept inline to avoid pulling in a urlencoding crate.
+fn percent_encode(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    for b in s.bytes() {
+        match b {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'.' | b'_' | b'~' => {
+                out.push(b as char)
+            }
+            _ => out.push_str(&format!("%{b:02X}")),
+        }
+    }
+    out
+}
+
+pub fn beszel_alive(beszel_url: &str) -> bool {
     matches!(
         ureq::get(&format!("{}/api/health", beszel_url))
             .timeout(TIMEOUT)
@@ -194,7 +217,8 @@ fn fetch_beszel_metrics(
 
     let resp = ureq::get(&format!(
         "{}/api/collections/systems/records?filter=name%3D%22{}%22&perPage=1",
-        beszel_url, system_name
+        beszel_url,
+        percent_encode(system_name)
     ))
     .set("Authorization", &token)
     .timeout(TIMEOUT)
@@ -231,7 +255,8 @@ fn fetch_beszel_metrics(
 
     let resp2 = ureq::get(&format!(
         "{}/api/collections/system_stats/records?sort=-created&perPage=1&filter=system%3D%22{}%22%26%26type%3D%221m%22",
-        beszel_url, system_id
+        beszel_url,
+        percent_encode(&system_id)
     ))
     .set("Authorization", &token)
     .timeout(TIMEOUT)
@@ -262,11 +287,15 @@ fn fetch_beszel_metrics(
 // ── Beszel system fetch ───────────────────────────────────────────────
 
 impl BeszelTarget {
-    /// Fetch live metrics for this Beszel system. An unconfigured target
-    /// (blank Beszel URL, system name, or admin credentials) short-circuits to
-    /// an offline panel without touching the network, so panels the user
-    /// hasn't set up stay clean rather than spamming failed requests.
-    pub fn fetch(&self) -> crate::ServiceMetrics {
+    /// Fetch live metrics for this Beszel system, given the hub's liveness.
+    ///
+    /// An unconfigured target (blank Beszel URL, system name, or admin
+    /// credentials) short-circuits to an offline panel without touching the
+    /// network, so panels the user hasn't set up stay clean rather than
+    /// spamming failed requests. All three targets share one Beszel instance,
+    /// so the caller probes [`beszel_alive`] once per cycle and passes the
+    /// result to all three, avoiding two redundant round-trips.
+    pub fn fetch_assuming_alive(&self, hub_alive: bool) -> crate::ServiceMetrics {
         if self.beszel_url.is_empty()
             || self.system_name.is_empty()
             || self.email.is_empty()
@@ -275,7 +304,7 @@ impl BeszelTarget {
             return offline_metrics(&self.hostname, &self.ip);
         }
 
-        if !beszel_alive(&self.beszel_url) {
+        if !hub_alive {
             return offline_metrics(&self.hostname, &self.ip);
         }
 
@@ -327,4 +356,18 @@ fn fmt_uptime(secs: u64) -> String {
     let mins  = (secs % 3600) / 60;
     if days > 0 { format!("{}d {}h {:02}m", days, hours, mins) }
     else        { format!("{}h {:02}m", hours, mins) }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn percent_encode_escapes_query_breaking_chars() {
+        // Unreserved chars pass through untouched.
+        assert_eq!(percent_encode("nas-01.home_lab~v2"), "nas-01.home_lab~v2");
+        // Characters that would corrupt the `filter=` expression are escaped.
+        assert_eq!(percent_encode(r#"a&b="c"%"#), "a%26b%3D%22c%22%25");
+        assert_eq!(percent_encode("a b"), "a%20b");
+    }
 }
