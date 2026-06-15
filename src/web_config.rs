@@ -162,13 +162,19 @@ async fn ui_handler(State(config): State<ConfigRef>) -> impl IntoResponse {
         .unwrap_or_else(|_| "[]".to_string());
 
     let beszel_url      = esc(&cfg.beszel_url);
+    let beszel_email    = esc(&cfg.beszel_email);
+    // Signals to the password field whether a secret is already stored, so the
+    // placeholder can say "leave blank to keep current" instead of echoing it.
+    let beszel_pw_set   = if cfg.beszel_password.is_empty() { "" } else { "saved — leave blank to keep" };
     let vps_name        = esc(&cfg.vps_name);
     let vps_hostname    = esc(&cfg.vps_hostname);
     let vps_ip          = esc(&cfg.vps_ip);
     let probe_host      = esc(&cfg.probe_host);
     let probe_port      = cfg.probe_port;
+    let nas_name        = esc(&cfg.nas_name);
     let nas_hostname    = esc(&cfg.nas_hostname);
     let nas_ip          = esc(&cfg.nas_ip);
+    let ha_name         = esc(&cfg.ha_name);
     let ha_hostname     = esc(&cfg.ha_hostname);
     let ha_ip           = esc(&cfg.ha_ip);
     let fan_serial_port = esc(&cfg.fan_serial_port);
@@ -393,8 +399,20 @@ function configApp() {{
   <label>
     <span class="field-label">BESZEL URL</span>
     <input type="text" name="beszel_url" value="{beszel_url}" placeholder="http://host:8090">
-    <p class="hint">Base URL of the Beszel monitoring instance. Credentials stay in the BESZEL_ADMIN_EMAIL / BESZEL_ADMIN_PASSWORD env vars.</p>
+    <p class="hint">Base URL of the Beszel monitoring instance. All monitored systems (VPS, NAS, HA) share this one instance.</p>
   </label>
+
+  <div class="field-row">
+    <label>
+      <span class="field-label">BESZEL ADMIN EMAIL</span>
+      <input type="text" name="beszel_email" value="{beszel_email}" placeholder="admin@example.com" autocomplete="off">
+    </label>
+    <label>
+      <span class="field-label">BESZEL ADMIN PASSWORD</span>
+      <input type="password" name="beszel_password" value="" placeholder="{beszel_pw_set}" autocomplete="off">
+      <p class="hint">Superuser credentials used to obtain an API token. Leave password blank to keep the stored one.</p>
+    </label>
+  </div>
 
   <label>
     <span class="field-label">BESZEL SYSTEM NAME</span>
@@ -429,6 +447,12 @@ function configApp() {{
 
   <h2>NAS</h2>
 
+  <label>
+    <span class="field-label">BESZEL SYSTEM NAME</span>
+    <input type="text" name="nas_name" value="{nas_name}" placeholder="nas-01">
+    <p class="hint">System name as registered in the same Beszel instance. Leave blank to keep the panel offline.</p>
+  </label>
+
   <div class="field-row">
     <label>
       <span class="field-label">NAS HOSTNAME</span>
@@ -441,6 +465,12 @@ function configApp() {{
   </div>
 
   <h2>HOME ASSISTANT</h2>
+
+  <label>
+    <span class="field-label">BESZEL SYSTEM NAME</span>
+    <input type="text" name="ha_name" value="{ha_name}" placeholder="homeassistant">
+    <p class="hint">System name as registered in the same Beszel instance. Leave blank to keep the panel offline.</p>
+  </label>
 
   <div class="field-row">
     <label>
@@ -486,7 +516,9 @@ struct ConfigForm {
     github_sources:   String,
     github_poll_secs: u64,
 
-    beszel_url:    String,
+    beszel_url:      String,
+    beszel_email:    String,
+    beszel_password: String,
     vps_name:      String,
     vps_hostname:  String,
     vps_ip:        String,
@@ -494,9 +526,11 @@ struct ConfigForm {
     probe_host:    String,
     probe_port:    u16,
 
+    nas_name:      String,
     nas_hostname:  String,
     nas_ip:        String,
 
+    ha_name:       String,
     ha_hostname:   String,
     ha_ip:         String,
 
@@ -540,6 +574,14 @@ async fn save_handler(
     new_cfg.github_poll_secs = form.github_poll_secs.max(30);
 
     new_cfg.beszel_url   = form.beszel_url.trim().trim_end_matches('/').to_string();
+    new_cfg.beszel_email = form.beszel_email.trim().to_string();
+    // A blank password field means "keep the stored secret" — so we only
+    // overwrite when the user actually typed a new one. (The page never echoes
+    // the saved password back into the form.)
+    let beszel_password = form.beszel_password.trim();
+    if !beszel_password.is_empty() {
+        new_cfg.beszel_password = beszel_password.to_string();
+    }
     new_cfg.vps_name     = form.vps_name.trim().to_string();
     new_cfg.vps_hostname = form.vps_hostname.trim().to_string();
     new_cfg.vps_ip       = form.vps_ip.trim().to_string();
@@ -547,9 +589,11 @@ async fn save_handler(
     new_cfg.probe_host = form.probe_host.trim().to_string();
     new_cfg.probe_port = form.probe_port;
 
+    new_cfg.nas_name     = form.nas_name.trim().to_string();
     new_cfg.nas_hostname = form.nas_hostname.trim().to_string();
     new_cfg.nas_ip       = form.nas_ip.trim().to_string();
 
+    new_cfg.ha_name     = form.ha_name.trim().to_string();
     new_cfg.ha_hostname = form.ha_hostname.trim().to_string();
     new_cfg.ha_ip       = form.ha_ip.trim().to_string();
 

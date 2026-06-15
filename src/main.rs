@@ -133,16 +133,30 @@ fn main() -> Result<(), Box<dyn Error>> {
         std::thread::sleep(NETWORK_PROBE_INTERVAL);
     });
 
-    // ── Remote metrics (VPS) + system alerts ─────────────────────────
+    // ── Remote metrics (Beszel: VPS, NAS, HA) + system alerts ────────
     let ui_weak_remote   = ui.as_weak();
     let shared_alerts_2  = shared_alerts.clone();
     let cfg_ref_remote   = cfg_ref.clone();
     std::thread::spawn(move || loop {
-        let vps_settings = remote_metrics::VpsSettings::from_config(&cfg_ref_remote.read().unwrap());
-        let (vps, sys_alerts) = match std::panic::catch_unwind(|| {
-            (remote_metrics::fetch_vps(&vps_settings), remote_metrics::RemoteAlert::fetch_all())
+        // Snapshot all three Beszel targets from the live config in one read,
+        // then release the lock before touching the network.
+        let (vps_target, nas_target, ha_target) = {
+            let cfg = cfg_ref_remote.read().unwrap();
+            (
+                remote_metrics::BeszelTarget::vps(&cfg),
+                remote_metrics::BeszelTarget::nas(&cfg),
+                remote_metrics::BeszelTarget::ha(&cfg),
+            )
+        };
+        let (vps, nas, ha, sys_alerts) = match std::panic::catch_unwind(|| {
+            (
+                vps_target.fetch(),
+                nas_target.fetch(),
+                ha_target.fetch(),
+                remote_metrics::RemoteAlert::fetch_all(),
+            )
         }) {
-            Ok(pair) => pair,
+            Ok(t) => t,
             Err(_) => {
                 eprintln!("remote_metrics: fetch thread panicked, skipping tick");
                 std::thread::sleep(Duration::from_secs(15));
@@ -168,6 +182,8 @@ fn main() -> Result<(), Box<dyn Error>> {
         if let Err(e) = slint::invoke_from_event_loop(move || {
             let Some(ui) = ui.upgrade() else { return };
             ui.set_vps_metrics(vps);
+            ui.set_nas_metrics(nas);
+            ui.set_ha_metrics(ha);
         }) {
             eprintln!("remote_metrics: event loop gone ({e:?}), exiting thread");
             return;

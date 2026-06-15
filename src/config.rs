@@ -50,6 +50,12 @@ pub struct AppConfig {
     // ── VPS (Beszel monitoring) ───────────────────────────────────────
     /// Base URL of the Beszel instance, e.g. `http://host:8090`.
     pub beszel_url:    String,
+    /// Beszel superuser email used to obtain an API auth token. Shared by all
+    /// monitored systems (they live in one Beszel instance).
+    pub beszel_email:    String,
+    /// Beszel superuser password. Stored alongside the other LAN-trusted
+    /// secrets in `config.json` (same model as the GitHub PATs).
+    pub beszel_password: String,
     /// System name as registered in Beszel (used to look up the record).
     pub vps_name:      String,
     /// Hostname shown on the VPS panel.
@@ -64,10 +70,14 @@ pub struct AppConfig {
     pub probe_port:    u16,
 
     // ── NAS panel ─────────────────────────────────────────────────────
+    /// System name as registered in Beszel (used to look up the record).
+    pub nas_name:      String,
     pub nas_hostname:  String,
     pub nas_ip:        String,
 
     // ── Home Assistant panel ──────────────────────────────────────────
+    /// System name as registered in Beszel (used to look up the record).
+    pub ha_name:       String,
     pub ha_hostname:   String,
     pub ha_ip:         String,
 
@@ -94,7 +104,9 @@ impl Default for AppConfig {
             // Infrastructure endpoints are intentionally blank by default —
             // populate them via the web config UI. Keeping them empty avoids
             // baking one deployment's hostnames/IPs into the shared source.
-            beszel_url:    String::new(),
+            beszel_url:      String::new(),
+            beszel_email:    String::new(),
+            beszel_password: String::new(),
             vps_name:      String::new(),
             vps_hostname:  String::new(),
             vps_ip:        String::new(),
@@ -102,9 +114,11 @@ impl Default for AppConfig {
             probe_host:    String::new(),
             probe_port:    22,
 
+            nas_name:      String::new(),
             nas_hostname:  String::new(),
             nas_ip:        String::new(),
 
+            ha_name:       String::new(),
             ha_hostname:   String::new(),
             ha_ip:         String::new(),
 

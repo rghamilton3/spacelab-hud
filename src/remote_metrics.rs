@@ -9,27 +9,57 @@ static AUTH_TOKEN: Mutex<Option<String>> = Mutex::new(None);
 
 // ── Public types ──────────────────────────────────────────────────────
 
-/// Runtime-configurable VPS / Beszel connection settings, snapshotted from
-/// [`crate::config::AppConfig`] each polling cycle.
+/// Runtime-configurable Beszel connection settings for a single monitored
+/// system (VPS, NAS, or Home Assistant), snapshotted from
+/// [`crate::config::AppConfig`] each polling cycle. All targets share one
+/// Beszel instance (`beszel_url`) and differ only by `system_name`.
 #[derive(Clone)]
-pub struct VpsSettings {
+pub struct BeszelTarget {
     /// Base URL of the Beszel instance, e.g. `http://host:8090`.
     pub beszel_url:  String,
+    /// Beszel superuser email used to obtain an API auth token.
+    pub email:       String,
+    /// Beszel superuser password.
+    pub password:    String,
     /// System name as registered in Beszel.
     pub system_name: String,
-    /// Hostname shown on the VPS panel.
+    /// Hostname shown on the panel.
     pub hostname:    String,
-    /// IP / address shown on the VPS panel.
+    /// IP / address shown on the panel.
     pub ip:          String,
 }
 
-impl VpsSettings {
-    pub fn from_config(cfg: &crate::config::AppConfig) -> Self {
+impl BeszelTarget {
+    pub fn vps(cfg: &crate::config::AppConfig) -> Self {
         Self {
             beszel_url:  cfg.beszel_url.clone(),
+            email:       cfg.beszel_email.clone(),
+            password:    cfg.beszel_password.clone(),
             system_name: cfg.vps_name.clone(),
             hostname:    cfg.vps_hostname.clone(),
             ip:          cfg.vps_ip.clone(),
+        }
+    }
+
+    pub fn nas(cfg: &crate::config::AppConfig) -> Self {
+        Self {
+            beszel_url:  cfg.beszel_url.clone(),
+            email:       cfg.beszel_email.clone(),
+            password:    cfg.beszel_password.clone(),
+            system_name: cfg.nas_name.clone(),
+            hostname:    cfg.nas_hostname.clone(),
+            ip:          cfg.nas_ip.clone(),
+        }
+    }
+
+    pub fn ha(cfg: &crate::config::AppConfig) -> Self {
+        Self {
+            beszel_url:  cfg.beszel_url.clone(),
+            email:       cfg.beszel_email.clone(),
+            password:    cfg.beszel_password.clone(),
+            system_name: cfg.ha_name.clone(),
+            hostname:    cfg.ha_hostname.clone(),
+            ip:          cfg.ha_ip.clone(),
         }
     }
 }
@@ -87,7 +117,7 @@ fn invalidate_token() {
     }
 }
 
-fn get_or_refresh_token(beszel_url: &str) -> Option<String> {
+fn get_or_refresh_token(beszel_url: &str, email: &str, password: &str) -> Option<String> {
     {
         let guard = AUTH_TOKEN.lock().ok()?;
         if let Some(t) = guard.as_ref() {
@@ -95,8 +125,9 @@ fn get_or_refresh_token(beszel_url: &str) -> Option<String> {
         }
     }
 
-    let email    = std::env::var("BESZEL_ADMIN_EMAIL").ok()?;
-    let password = std::env::var("BESZEL_ADMIN_PASSWORD").ok()?;
+    if email.is_empty() || password.is_empty() {
+        return None;
+    }
 
     #[derive(Deserialize)]
     struct AuthResp { token: String }
@@ -139,8 +170,13 @@ struct BeszelMetrics {
     disk_pct:      f64,
 }
 
-fn fetch_beszel_metrics(beszel_url: &str, system_name: &str) -> Option<BeszelMetrics> {
-    let token = get_or_refresh_token(beszel_url)?;
+fn fetch_beszel_metrics(
+    beszel_url:  &str,
+    system_name: &str,
+    email:       &str,
+    password:    &str,
+) -> Option<BeszelMetrics> {
+    let token = get_or_refresh_token(beszel_url, email, password)?;
 
     // ── Step 1: resolve system ID and uptime ──────────────────────────
     #[derive(Deserialize)]
@@ -223,36 +259,55 @@ fn fetch_beszel_metrics(beszel_url: &str, system_name: &str) -> Option<BeszelMet
     })
 }
 
-// ── VPS fetch ─────────────────────────────────────────────────────────
+// ── Beszel system fetch ───────────────────────────────────────────────
 
-pub fn fetch_vps(settings: &VpsSettings) -> crate::ServiceMetrics {
-    if !beszel_alive(&settings.beszel_url) {
-        return offline_metrics(&settings.hostname, &settings.ip);
-    }
+impl BeszelTarget {
+    /// Fetch live metrics for this Beszel system. An unconfigured target
+    /// (blank Beszel URL, system name, or admin credentials) short-circuits to
+    /// an offline panel without touching the network, so panels the user
+    /// hasn't set up stay clean rather than spamming failed requests.
+    pub fn fetch(&self) -> crate::ServiceMetrics {
+        if self.beszel_url.is_empty()
+            || self.system_name.is_empty()
+            || self.email.is_empty()
+            || self.password.is_empty()
+        {
+            return offline_metrics(&self.hostname, &self.ip);
+        }
 
-    let m = match fetch_beszel_metrics(&settings.beszel_url, &settings.system_name) {
-        Some(m) => m,
-        None    => return online_no_metrics(&settings.hostname, &settings.ip),
-    };
+        if !beszel_alive(&self.beszel_url) {
+            return offline_metrics(&self.hostname, &self.ip);
+        }
 
-    let load1  = m.load.first()  .copied().unwrap_or(0.0);
-    let load5  = m.load.get(1)   .copied().unwrap_or(0.0);
-    let load15 = m.load.get(2)   .copied().unwrap_or(0.0);
+        let m = match fetch_beszel_metrics(
+            &self.beszel_url,
+            &self.system_name,
+            &self.email,
+            &self.password,
+        ) {
+            Some(m) => m,
+            None    => return online_no_metrics(&self.hostname, &self.ip),
+        };
 
-    crate::ServiceMetrics {
-        hostname:  settings.hostname.as_str().into(),
-        ip_addr:   settings.ip.as_str().into(),
-        reachable: true,
-        uptime:    fmt_uptime(m.uptime_secs).into(),
-        load_avg:  format!("{:.2}  {:.2}  {:.2}", load1, load5, load15).into(),
-        cpu_usage: format!("{:.1}%", m.cpu_pct).into(),
-        cpu_pct:   (m.cpu_pct / 100.0).clamp(0.0, 1.0) as f32,
-        cpu_temp:  "—".into(),
-        temp_pct:  0.0,
-        ram:       format!("{:.1} / {:.1} GB", m.ram_used_gb, m.ram_total_gb).into(),
-        ram_pct:   (m.ram_pct / 100.0).clamp(0.0, 1.0) as f32,
-        disk:      format!("{:.1} / {:.1} GB", m.disk_used_gb, m.disk_total_gb).into(),
-        disk_pct:  (m.disk_pct / 100.0).clamp(0.0, 1.0) as f32,
+        let load1  = m.load.first()  .copied().unwrap_or(0.0);
+        let load5  = m.load.get(1)   .copied().unwrap_or(0.0);
+        let load15 = m.load.get(2)   .copied().unwrap_or(0.0);
+
+        crate::ServiceMetrics {
+            hostname:  self.hostname.as_str().into(),
+            ip_addr:   self.ip.as_str().into(),
+            reachable: true,
+            uptime:    fmt_uptime(m.uptime_secs).into(),
+            load_avg:  format!("{:.2}  {:.2}  {:.2}", load1, load5, load15).into(),
+            cpu_usage: format!("{:.1}%", m.cpu_pct).into(),
+            cpu_pct:   (m.cpu_pct / 100.0).clamp(0.0, 1.0) as f32,
+            cpu_temp:  "—".into(),
+            temp_pct:  0.0,
+            ram:       format!("{:.1} / {:.1} GB", m.ram_used_gb, m.ram_total_gb).into(),
+            ram_pct:   (m.ram_pct / 100.0).clamp(0.0, 1.0) as f32,
+            disk:      format!("{:.1} / {:.1} GB", m.disk_used_gb, m.disk_total_gb).into(),
+            disk_pct:  (m.disk_pct / 100.0).clamp(0.0, 1.0) as f32,
+        }
     }
 }
 
