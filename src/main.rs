@@ -10,6 +10,7 @@ mod config;
 mod fan_telem;
 mod github_watcher;
 mod remote_metrics;
+mod secrets;
 mod shared_state;
 mod system_info;
 mod web_config;
