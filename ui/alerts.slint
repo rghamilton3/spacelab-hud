@@ -110,7 +110,7 @@ export component AlertsScreen {
                     spacing: 8px;
                     Text {
                         text: !root.alerts-reachable ? "OFFLINE"
-                            : (root.alert-count == 0 ? "NOMINAL" : (root.alert-count + " ACTIVE"));
+                            : root.alert-count + " ACTIVE";
                         color: !root.alerts-reachable ? Theme.danger
                              : (root.alert-count == 0 ? Theme.accent : Theme.danger);
                         font-size: 24px;
