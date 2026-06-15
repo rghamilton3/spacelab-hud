@@ -50,6 +50,12 @@ pub struct AppConfig {
     // ── VPS (Beszel monitoring) ───────────────────────────────────────
     /// Base URL of the Beszel instance, e.g. `http://host:8090`.
     pub beszel_url:    String,
+    /// Beszel superuser email used to obtain an API auth token. Shared by all
+    /// monitored systems (they live in one Beszel instance).
+    pub beszel_email:    String,
+    /// Beszel superuser password. Stored alongside the other LAN-trusted
+    /// secrets in `config.json` (same model as the GitHub PATs).
+    pub beszel_password: String,
     /// System name as registered in Beszel (used to look up the record).
     pub vps_name:      String,
     /// Hostname shown on the VPS panel.
@@ -64,10 +70,14 @@ pub struct AppConfig {
     pub probe_port:    u16,
 
     // ── NAS panel ─────────────────────────────────────────────────────
+    /// System name as registered in Beszel (used to look up the record).
+    pub nas_name:      String,
     pub nas_hostname:  String,
     pub nas_ip:        String,
 
     // ── Home Assistant panel ──────────────────────────────────────────
+    /// System name as registered in Beszel (used to look up the record).
+    pub ha_name:       String,
     pub ha_hostname:   String,
     pub ha_ip:         String,
 
@@ -94,7 +104,9 @@ impl Default for AppConfig {
             // Infrastructure endpoints are intentionally blank by default —
             // populate them via the web config UI. Keeping them empty avoids
             // baking one deployment's hostnames/IPs into the shared source.
-            beszel_url:    String::new(),
+            beszel_url:      String::new(),
+            beszel_email:    String::new(),
+            beszel_password: String::new(),
             vps_name:      String::new(),
             vps_hostname:  String::new(),
             vps_ip:        String::new(),
@@ -102,9 +114,11 @@ impl Default for AppConfig {
             probe_host:    String::new(),
             probe_port:    22,
 
+            nas_name:      String::new(),
             nas_hostname:  String::new(),
             nas_ip:        String::new(),
 
+            ha_name:       String::new(),
             ha_hostname:   String::new(),
             ha_ip:         String::new(),
 
@@ -116,11 +130,11 @@ impl Default for AppConfig {
 }
 
 impl AppConfig {
+    /// Path to `config.json`. A pure computation — no I/O — so callers (and
+    /// tests) can rely on it not creating directories as a side effect. The
+    /// containing dir is created in [`save`](Self::save), the only writer.
     pub fn config_path() -> PathBuf {
-        let home = std::env::var("HOME").unwrap_or_else(|_| ".".to_string());
-        let dir  = PathBuf::from(home).join(".config/spacelab-hud");
-        std::fs::create_dir_all(&dir).ok();
-        dir.join("config.json")
+        config_dir().join("config.json")
     }
 
     pub fn load() -> Self {
@@ -130,7 +144,33 @@ impl AppConfig {
             .and_then(|s| serde_json::from_str(&s).ok())
             .unwrap_or_default();
         cfg.migrate();
+        cfg.decrypt_secrets();
         cfg
+    }
+
+    /// Secret fields, encrypted at rest. The in-memory `AppConfig` always holds
+    /// them in plaintext; encryption happens only at the [`save`](Self::save)
+    /// boundary and decryption only here on [`load`](Self::load).
+    ///
+    /// On load, an `enc:` token is decrypted; a plaintext value (a hand-edited
+    /// config, or one written before encryption existed) is left as-is and gets
+    /// sealed on the next save. A token that fails to decrypt (wrong/missing
+    /// key) is cleared rather than left as garbage the app would try to use.
+    fn decrypt_secrets(&mut self) {
+        decrypt_field(&mut self.beszel_password);
+        for src in &mut self.github_sources {
+            decrypt_field(&mut src.pat);
+        }
+    }
+
+    /// Inverse of [`decrypt_secrets`](Self::decrypt_secrets); see its docs for
+    /// the field list and the plaintext-migration behavior.
+    fn encrypt_secrets(&mut self) -> anyhow::Result<()> {
+        encrypt_field(&mut self.beszel_password)?;
+        for src in &mut self.github_sources {
+            encrypt_field(&mut src.pat)?;
+        }
+        Ok(())
     }
 
     /// Folds a legacy single-credential config (pre-multi-source) into the
@@ -147,8 +187,17 @@ impl AppConfig {
     }
 
     pub fn save(&self) -> anyhow::Result<()> {
-        let json = serde_json::to_string_pretty(self)?;
-        std::fs::write(Self::config_path(), json)?;
+        // Encrypt secrets in a clone so the live config stays plaintext for the
+        // running threads (and the web UI, which re-renders the saved values).
+        let mut to_store = self.clone();
+        to_store.encrypt_secrets()?;
+        let json = serde_json::to_string_pretty(&to_store)?;
+        let path = Self::config_path();
+        if let Some(dir) = path.parent() {
+            std::fs::create_dir_all(dir)?;
+        }
+        std::fs::write(&path, json)?;
+        restrict_config_perms(&path);
         Ok(())
     }
 
@@ -158,6 +207,60 @@ impl AppConfig {
             .any(|s| !s.pat.is_empty() && !s.repos.is_empty())
     }
 }
+
+/// Test-only override for the config dir, so the disk round-trip test can use
+/// a temp dir without mutating process-wide `HOME` (unsound across the parallel
+/// test harness). Paired with [`crate::secrets::TEST_STATE_DIR`].
+#[cfg(test)]
+pub(crate) static TEST_CONFIG_DIR: std::sync::OnceLock<PathBuf> = std::sync::OnceLock::new();
+
+/// Directory holding `config.json`. Pure (no I/O); see [`AppConfig::config_path`].
+fn config_dir() -> PathBuf {
+    #[cfg(test)]
+    {
+        if let Some(dir) = TEST_CONFIG_DIR.get() {
+            return dir.clone();
+        }
+    }
+    let home = std::env::var("HOME").unwrap_or_else(|_| ".".to_string());
+    PathBuf::from(home).join(".config/spacelab-hud")
+}
+
+/// Decrypts a secret field in place, leaving plaintext untouched (migration)
+/// and clearing a value that can't be decrypted.
+fn decrypt_field(field: &mut String) {
+    if crate::secrets::is_encrypted(field) {
+        match crate::secrets::decrypt(field) {
+            Ok(plain) => *field = plain,
+            Err(e) => {
+                eprintln!("config: failed to decrypt a secret field, clearing it: {e}");
+                field.clear();
+            }
+        }
+    }
+}
+
+/// Encrypts a non-empty plaintext field in place; no-op on empty or
+/// already-encrypted values.
+fn encrypt_field(field: &mut String) -> anyhow::Result<()> {
+    if !field.is_empty() && !crate::secrets::is_encrypted(field) {
+        *field = crate::secrets::encrypt(field)?;
+    }
+    Ok(())
+}
+
+/// Tightens `config.json` to owner-only (`0600`). It holds ciphertext, but the
+/// key lives elsewhere, so this is defense in depth against casual reads.
+#[cfg(unix)]
+fn restrict_config_perms(path: &std::path::Path) {
+    use std::os::unix::fs::PermissionsExt;
+    if let Err(e) = std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600)) {
+        eprintln!("config: failed to chmod 600 {}: {e}", path.display());
+    }
+}
+
+#[cfg(not(unix))]
+fn restrict_config_perms(_path: &std::path::Path) {}
 
 pub type ConfigRef = Arc<RwLock<AppConfig>>;
 
@@ -218,5 +321,48 @@ mod tests {
         let cfg = load_str(r#"{ "github_repos": ["alice/a"] }"#);
         assert!(cfg.github_sources.is_empty());
         assert!(!cfg.is_configured());
+    }
+
+    /// Full boundary round-trip: secrets must land on disk as ciphertext yet
+    /// come back as plaintext through `load`. Points the config dir and key
+    /// file at a unique temp dir via the test-only `OnceLock` overrides, so the
+    /// real `config_path` / key file are exercised without mutating
+    /// process-wide env vars. This is the only test that initializes the global
+    /// cipher, so the temp-dir key it installs can't bleed into other tests.
+    #[test]
+    fn secrets_round_trip_through_disk() {
+        let tmp = std::env::temp_dir().join(format!("slhud-cfg-test-{}", std::process::id()));
+        std::fs::create_dir_all(&tmp).unwrap();
+        TEST_CONFIG_DIR.set(tmp.join("config")).expect("config dir set once");
+        crate::secrets::TEST_STATE_DIR
+            .set(tmp.join("state"))
+            .expect("state dir set once");
+
+        let cfg = AppConfig {
+            beszel_password: "hunter2".to_string(),
+            github_sources: vec![GithubSource {
+                pat: "ghp_topsecret".to_string(),
+                username: "alice".to_string(),
+                repos: vec!["alice/a".to_string()],
+            }],
+            ..Default::default()
+        };
+        cfg.save().unwrap();
+
+        // On disk: ciphertext markers present, no plaintext secrets leaked.
+        let raw = std::fs::read_to_string(AppConfig::config_path()).unwrap();
+        assert!(raw.contains("enc:v1:"));
+        assert!(!raw.contains("hunter2"));
+        assert!(!raw.contains("ghp_topsecret"));
+        // Non-secret fields stay readable.
+        assert!(raw.contains("alice/a"));
+
+        // Reload: secrets decrypt back to plaintext.
+        let loaded = AppConfig::load();
+        assert_eq!(loaded.beszel_password, "hunter2");
+        assert_eq!(loaded.github_sources[0].pat, "ghp_topsecret");
+        assert_eq!(loaded.github_sources[0].username, "alice");
+
+        std::fs::remove_dir_all(&tmp).ok();
     }
 }

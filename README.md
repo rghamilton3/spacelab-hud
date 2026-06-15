@@ -23,39 +23,25 @@ A multi-screen, swipe-and-tap touch UI. Each screen surfaces a different slice o
 
 ## Configuration
 
-Configuration lives in three places, depending on how often a value changes.
+Everything is configured at runtime through the web config UI — no rebuild and no environment variables required. The app serves a small config page over HTTP; on the Pi, browse to `http://<pi-host>/` (port **80** by default).
 
-### 1. Web config UI (runtime, no rebuild)
-
-The app serves a small config page over HTTP. On the Pi, browse to `http://<pi-host>/` (port **80** by default) to set:
-
-| Field | Description |
+| Section | Fields |
 | --- | --- |
-| **GitHub PAT** | Fine-grained (recommended) or classic token. The page lists the exact read-only permissions to grant. |
-| **GitHub username** | Distinguishes your activity from others in the feed. |
-| **Repos to watch** | Picked from a live list fetched with the PAT, or added manually as `owner/repo`. |
-| **Poll interval** | Seconds between GitHub polls (min 30). |
+| **GitHub** | One source per org/account: a PAT (fine-grained recommended — the page lists the exact read-only permissions), an optional username (distinguishes your activity in the feed), and the repos to watch (picked from a live list or added manually as `owner/repo`). Plus a global poll interval (seconds, min 30). |
+| **VPS / Beszel** | Base URL of your [Beszel](https://beszel.dev/) instance, the admin email + password used to obtain an API token, and the VPS system name / hostname / IP. |
+| **Network probe** | Host and TCP port that the local-network reachability indicator connects to. |
+| **NAS** and **Home Assistant** | The Beszel system name for each (they share the one Beszel instance above), plus hostname / IP. Leave a system name blank to keep that panel offline. |
+| **Fan controller** | USB serial port and the rack-temperature warn / critical thresholds (°C). |
 
-Settings are persisted to `~/.config/spacelab-hud/config.json`. The web config port itself is **not** editable from the UI — change `web_config_port` in that JSON file (then restart) if port 80 is unavailable.
+All monitored systems (VPS, NAS, Home Assistant) read from the **same** Beszel instance, differing only by system name — so the Beszel URL and admin credentials are entered once.
 
-### 2. Environment variables
+Settings are persisted to `~/.config/spacelab-hud/config.json` (mode `0600`). The web config port itself is **not** editable from the UI — change `web_config_port` in that JSON file (then restart) if port 80 is unavailable.
 
-Set before launching the app (e.g. in the systemd unit or launch script):
+### Secret storage
 
-| Variable | Purpose |
-| --- | --- |
-| `BESZEL_ADMIN_EMAIL` | Beszel admin login for VPS metrics. |
-| `BESZEL_ADMIN_PASSWORD` | Beszel admin password. Without these two, the VPS tile shows reachable-but-no-metrics. |
+The secret fields — the Beszel admin password and the GitHub PATs — are **encrypted at rest** (ChaCha20-Poly1305) before being written to `config.json`. The symmetric key is generated on first run and kept in a separate `0600` file at `~/.local/state/spacelab-hud/secret.key`, so a leaked config backup or stray commit doesn't also expose the key. Everything else in the config is stored as readable JSON.
 
-### 3. Compile-time constants (require rebuild)
-
-Host-specific addresses are hardcoded as `const`s — edit the source and recompile to change them:
-
-| Location | Constants |
-| --- | --- |
-| `src/main.rs` | `NETWORK_PROBE_HOST` / `_PORT` (reachability probe), and the NAS / Home Assistant hostnames + IPs passed to `offline_metrics`. |
-| `src/remote_metrics.rs` | `BESZEL_HOST`, `VPS_SYSTEM_NAME`, `VPS_HOSTNAME`, `VPS_IP_ADDR`. |
-| `src/fan_telem.rs` | `SERIAL_PORT` (default `/dev/ttyACM0`), `TEMP_WARN_C` (35 °C), `TEMP_CRIT_C` (40 °C). |
+This is proportionate protection for an unattended LAN device: because the HUD auto-boots and must decrypt with no human present, the key necessarily lives on the same machine — so this defends against *casual* exposure (backups, screen-shares, accidental commits), not against an attacker who already has read access to the Pi's filesystem. (The key layer is isolated in `src/secrets.rs` so it can later be upgraded to a TPM-sealed key.) If `secret.key` is lost, re-enter the secrets in the web config UI.
 
 ## Building
 
