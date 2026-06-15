@@ -1,4 +1,4 @@
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 use chrono::{DateTime, Utc};
 use reqwest::Client;
@@ -209,14 +209,15 @@ pub async fn run(
 ) {
     let mut seen        = SeenIds::default();
     let mut events: std::collections::VecDeque<crate::GithubEvent> = Default::default();
-    let mut last_pat    = String::new();
-    let mut client: Option<Client> = None;
+    // One reqwest client per distinct PAT, kept across cycles to preserve
+    // connection pooling. Keyed by the PAT string itself.
+    let mut clients: HashMap<String, Client> = HashMap::new();
+    let mut last_sig    = String::new();
     let mut first_cycle = true;
     let mut since       = Utc::now().to_rfc3339();
 
     loop {
-        let cfg           = config_ref.read().unwrap().clone();
-        let username_lower = cfg.github_username.to_lowercase();
+        let cfg = config_ref.read().unwrap().clone();
 
         if !cfg.is_configured() {
             push_github_state(&ui_weak, vec![], vec![], 0, 0, false, false);
@@ -224,46 +225,77 @@ pub async fn run(
             continue;
         }
 
-        if cfg.github_pat != last_pat {
-            client = build_client(&cfg.github_pat).ok();
-            last_pat = cfg.github_pat.clone();
-            seen = SeenIds::default();
+        // Re-baseline (drop seen IDs, suppress this cycle's alerts) whenever the
+        // credential/repo set changes, so a newly-added repo doesn't fire alerts
+        // for items that already existed before it was watched. ASCII unit (1F)
+        // and record (1E) separators can't appear in a PAT or `owner/repo`, so
+        // the signature is collision-free.
+        let sig: String = cfg.github_sources.iter()
+            .map(|s| format!("{}\u{1f}{}", s.pat, s.repos.join(",")))
+            .collect::<Vec<_>>()
+            .join("\u{1e}");
+        if sig != last_sig {
+            seen        = SeenIds::default();
             first_cycle = true;
+            last_sig    = sig;
         }
 
-        let Some(ref cl) = client else {
-            sleep(Duration::from_secs(cfg.github_poll_secs)).await;
-            continue;
-        };
+        // Ensure a client per distinct PAT; drop clients for removed PATs.
+        let active_pats: HashSet<&str> = cfg.github_sources.iter()
+            .map(|s| s.pat.as_str())
+            .filter(|p| !p.is_empty())
+            .collect();
+        for pat in &active_pats {
+            if !clients.contains_key(*pat) {
+                if let Ok(c) = build_client(pat) {
+                    clients.insert((*pat).to_string(), c);
+                }
+            }
+        }
+        clients.retain(|pat, _| active_pats.contains(pat.as_str()));
 
         let cycle_since = since.clone();
         since = Utc::now().to_rfc3339();
 
-        let polls: Vec<_> = cfg.github_repos.iter()
-            .map(|repo| {
-                let cl    = cl.clone();
-                let repo  = repo.clone();
-                let since = cycle_since.clone();
-                tokio::spawn(async move {
-                    let result = poll_repo(&cl, &repo, &since).await;
-                    (repo, result)
+        // Flatten (source × repo) into one task list. Each task carries the
+        // source's lowercased username so per-repo "is this mine?" filtering
+        // uses the right identity even when sources span different accounts.
+        let polls: Vec<_> = cfg.github_sources.iter()
+            .filter(|src| !src.pat.is_empty())
+            .flat_map(|src| {
+                let username_lower = src.username.to_lowercase();
+                let client = clients.get(&src.pat).cloned();
+                let cycle_since = cycle_since.clone();
+                src.repos.iter().map(move |repo| {
+                    let repo   = repo.clone();
+                    let since  = cycle_since.clone();
+                    let ul     = username_lower.clone();
+                    let client = client.clone();
+                    tokio::spawn(async move {
+                        let result = match client {
+                            Some(cl) => poll_repo(&cl, &repo, &since).await,
+                            None     => None,
+                        };
+                        (repo, ul, result)
+                    })
                 })
             })
             .collect();
 
-        let results: Vec<(String, Option<RepoPoll>)> = futures::future::join_all(polls)
+        let results: Vec<(String, String, Option<RepoPoll>)> = futures::future::join_all(polls)
             .await
             .into_iter()
             .filter_map(|r| r.ok())
             .collect();
 
-        let reachable        = results.iter().any(|(_, r)| r.is_some());
+        let reachable        = results.iter().any(|(_, _, r)| r.is_some());
         let mut repo_states  = Vec::<crate::GithubRepo>::new();
         let mut new_gh_alerts = Vec::<AlertData>::new();
         let mut total_prs    = 0i32;
         let mut total_issues = 0i32;
 
-        for (repo_name, poll) in &results {
+        for (repo_name, username_lower, poll) in &results {
+            let username_lower = username_lower.as_str();
             let Some(poll) = poll else {
                 repo_states.push(crate::GithubRepo {
                     name:        repo_name.clone().into(),

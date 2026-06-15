@@ -8,7 +8,7 @@ use axum::{
 };
 use serde::{Deserialize, Serialize};
 
-use crate::config::{AppConfig, ConfigRef};
+use crate::config::{ConfigRef, GithubSource};
 
 /// Minimal HTML-attribute escaper for values interpolated into the config
 /// page. The form values are LAN-trusted, but escaping keeps a stray `"` or
@@ -92,16 +92,19 @@ struct ReposResp {
     error: Option<String>,
 }
 
-async fn repos_handler(State(config): State<ConfigRef>) -> impl IntoResponse {
-    let pat = config.read().unwrap().github_pat.clone();
+/// Lists the repos reachable by the PAT passed in the query string. Each source
+/// in the config UI has its own chooser, so the PAT comes from the (possibly
+/// unsaved) form field rather than from the stored config.
+async fn repos_handler(Query(q): Query<PatQuery>) -> impl IntoResponse {
+    let pat = q.github_pat.trim();
     if pat.is_empty() {
         return Json(ReposResp {
             repos: vec![],
-            error: Some("PAT not configured — save a PAT first".to_string()),
+            error: Some("Enter a PAT first".to_string()),
         })
         .into_response();
     }
-    match fetch_all_user_repos(&pat).await {
+    match fetch_all_user_repos(pat).await {
         Ok(repos) => Json(ReposResp { repos, error: None }).into_response(),
         Err(e) => Json(ReposResp { repos: vec![], error: Some(e) }).into_response(),
     }
@@ -151,10 +154,11 @@ pub async fn serve(config: ConfigRef, port: u16) {
 async fn ui_handler(State(config): State<ConfigRef>) -> impl IntoResponse {
     let cfg  = config.read().unwrap().clone();
     // Escape every user-controlled string before it lands in an HTML attribute.
-    let pat  = esc(&cfg.github_pat);
-    let user = esc(&cfg.github_username);
     let poll = cfg.github_poll_secs;
-    let current_repos_json = serde_json::to_string(&cfg.github_repos)
+    // Seed the per-source chooser. Embedded in a <script type="application/json">
+    // block (not an attribute), so JSON encoding of the quotes is the escaping;
+    // PATs and `owner/repo` names contain no `<`, so no `</script>` breakout.
+    let sources_json = serde_json::to_string(&cfg.github_sources)
         .unwrap_or_else(|_| "[]".to_string());
 
     let beszel_url      = esc(&cfg.beszel_url);
@@ -177,46 +181,71 @@ async fn ui_handler(State(config): State<ConfigRef>) -> impl IntoResponse {
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>SpaceLab HUD — Config</title>
-<script src="https://cdn.jsdelivr.net/npm/htmx.org@1.9.12/dist/htmx.min.js"></script>
 <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.14.1/dist/cdn.min.js"></script>
 <script>
-function repoChooser() {{
-  const currentRepos = JSON.parse(document.getElementById('current-repos').textContent);
+function blankSource() {{
+  return {{ pat:'', username:'', repos:[], available:[], search:'', loading:false, error:'', status:'' }};
+}}
+
+function configApp() {{
+  const initial = JSON.parse(document.getElementById('initial-sources').textContent);
+  const sources = initial.length
+    ? initial.map(s => ({{ ...blankSource(), pat: s.pat || '', username: s.username || '', repos: s.repos || [] }}))
+    : [ blankSource() ];
+
   return {{
-    repos:    [],
-    selected: [...currentRepos],
-    search:   '',
-    loading:  true,
-    error:    '',
+    sources,
 
-    get filteredRepos() {{
-      const q = this.search.toLowerCase();
-      return q ? this.repos.filter(r => r.toLowerCase().includes(q)) : this.repos;
+    init() {{
+      // Pre-load the repo list for any source that already carries a PAT.
+      for (const src of this.sources) if (src.pat) this.loadRepos(src);
     }},
 
-    async init() {{
+    addSource()      {{ this.sources.push(blankSource()); }},
+    removeSource(i)  {{ this.sources.splice(i, 1); if (!this.sources.length) this.addSource(); }},
+
+    async validatePat(src) {{
+      src.status = '';
+      if (!src.pat) {{ src.available = []; return; }}
       try {{
-        const resp = await fetch('/repos');
-        const data = await resp.json();
-        this.repos = data.repos || [];
-        for (const r of currentRepos) {{
-          if (!this.repos.includes(r)) this.repos.push(r);
-        }}
-        this.error = data.error || '';
-      }} catch (_) {{
-        this.error = 'Failed to load repos';
-        this.repos = [...currentRepos];
-      }}
-      this.loading = false;
+        const resp = await fetch('/validate-pat?github_pat=' + encodeURIComponent(src.pat));
+        src.status = await resp.text();
+      }} catch (_) {{ src.status = ''; }}
+      this.loadRepos(src);
     }},
 
-    addManual() {{
-      const input = this.$refs.manualInput;
-      const val   = input.value.trim();
+    async loadRepos(src) {{
+      if (!src.pat) {{ src.error = 'Enter a PAT first'; src.available = []; return; }}
+      src.loading = true; src.error = '';
+      try {{
+        const resp = await fetch('/repos?github_pat=' + encodeURIComponent(src.pat));
+        const data = await resp.json();
+        src.available = data.repos || [];
+        for (const r of src.repos) if (!src.available.includes(r)) src.available.push(r);
+        src.error = data.error || '';
+      }} catch (_) {{
+        src.error = 'Failed to load repos';
+        src.available = [...src.repos];
+      }}
+      src.loading = false;
+    }},
+
+    filtered(src) {{
+      const q = src.search.toLowerCase();
+      return q ? src.available.filter(r => r.toLowerCase().includes(q)) : src.available;
+    }},
+
+    addManual(src, val) {{
+      val = (val || '').trim();
       if (!val || !val.includes('/')) return;
-      if (!this.repos.includes(val))     this.repos.unshift(val);
-      if (!this.selected.includes(val))  this.selected.push(val);
-      input.value = '';
+      if (!src.available.includes(val)) src.available.unshift(val);
+      if (!src.repos.includes(val))     src.repos.push(val);
+    }},
+
+    get payload() {{
+      return JSON.stringify(this.sources.map(s => ({{
+        pat: s.pat, username: s.username, repos: s.repos
+      }})));
     }},
   }};
 }}
@@ -246,9 +275,18 @@ function repoChooser() {{
   .pat-help li {{ margin-left: 16px; color: #3e6ea0; }}
   .pat-ok  {{ color: #00c875; font-size: 12px; }}
   .pat-err {{ color: #e05050; font-size: 12px; }}
+  /* GitHub source blocks */
+  .gh-source {{ border: 1px solid #1e2d4a; border-radius: 6px; padding: 16px;
+    margin-bottom: 16px; background: #0c1420; }}
+  .gh-source-head {{ display: flex; justify-content: space-between;
+    align-items: center; margin-bottom: 12px; }}
+  .rm-btn {{ width: auto; margin: 0; padding: 6px 12px; background: #3a1e1e;
+    color: #e0a0a0; border: 1px solid #4a1e1e; font-family: monospace;
+    font-size: 11px; letter-spacing: 1px; cursor: pointer; border-radius: 4px; }}
+  .rm-btn:hover {{ background: #5a2a2a; }}
   /* Repo chooser */
-  .repo-chooser {{ margin-bottom: 16px; }}
-  #repo-list {{ background: #0f1828; border: 1px solid #1e2d4a; border-radius: 4px;
+  .repo-chooser {{ margin-bottom: 0; }}
+  .repo-list {{ background: #0f1828; border: 1px solid #1e2d4a; border-radius: 4px;
     height: 220px; overflow-y: auto; margin-top: 8px; }}
   .repo-item {{ display: flex; align-items: center; gap: 8px;
     padding: 6px 12px; cursor: pointer; font-size: 13px; margin-bottom: 0; }}
@@ -269,68 +307,81 @@ function repoChooser() {{
 </head>
 <body>
 <h1>SPACELAB-1 // CONFIG</h1>
-<form method="post" action="/config">
+<form method="post" action="/config" x-data="configApp()" x-init="init()">
 
   <h2>GITHUB</h2>
+  <p class="hint" style="margin-bottom:14px">
+    One source per resource owner. A fine-grained PAT only reaches a single org or
+    account, so add a separate source for each org you want to watch.
+  </p>
 
-  <label>
-    <span class="field-label">GITHUB PAT</span>
-    <input type="password" name="github_pat" id="github_pat" value="{pat}"
-      placeholder="ghp_&#8230;" autocomplete="off"
-      hx-get="/validate-pat"
-      hx-trigger="change"
-      hx-target="#pat-status"
-      hx-include="#github_pat">
-    <div id="pat-status"></div>
-    <div class="pat-help">
-      <b>Fine-grained PAT</b> (recommended) &#8212; Settings &#8594; Developer settings &#8594; Fine-grained tokens<br>
-      Set <b>Repository access</b> to your watched repos, then enable:<br>
-      <ul>
-        <li><b>Actions</b> &#8594; Read-only &nbsp;(CI run status)</li>
-        <li><b>Issues</b> &#8594; Read-only &nbsp;(issues + comments)</li>
-        <li><b>Pull requests</b> &#8594; Read-only &nbsp;(PRs + comments)</li>
-        <li><b>Metadata</b> &#8594; Read-only &nbsp;(auto-selected, mandatory)</li>
-      </ul>
-      <b>Classic PAT</b> &#8212; scope <b>public_repo</b> (public) or <b>repo</b> (private)
-    </div>
-  </label>
+  <div class="pat-help">
+    <b>Fine-grained PAT</b> (recommended) &#8212; Settings &#8594; Developer settings &#8594; Fine-grained tokens<br>
+    Set <b>Repository access</b> to your watched repos, then enable:<br>
+    <ul>
+      <li><b>Actions</b> &#8594; Read-only &nbsp;(CI run status)</li>
+      <li><b>Issues</b> &#8594; Read-only &nbsp;(issues + comments)</li>
+      <li><b>Pull requests</b> &#8594; Read-only &nbsp;(PRs + comments)</li>
+      <li><b>Metadata</b> &#8594; Read-only &nbsp;(auto-selected, mandatory)</li>
+    </ul>
+    <b>Classic PAT</b> &#8212; scope <b>public_repo</b> (public) or <b>repo</b> (private).
+    Spans multiple orgs only if each org has SSO-authorized the token.
+  </div>
 
-  <label>
-    <span class="field-label">GITHUB USERNAME</span>
-    <input type="text" name="github_username" value="{user}" placeholder="your-username">
-    <p class="hint">Used to distinguish your activity from others</p>
-  </label>
+  <template x-for="(src, i) in sources" :key="i">
+    <div class="gh-source">
+      <div class="gh-source-head">
+        <span class="field-label" x-text="'SOURCE ' + (i + 1)"></span>
+        <button type="button" class="rm-btn" @click="removeSource(i)" x-show="sources.length > 1">REMOVE</button>
+      </div>
 
-  <div class="repo-chooser" x-data="repoChooser()" x-init="init()">
-    <span class="field-label">REPOS TO WATCH</span>
-    <input class="repo-search" type="text" x-model="search" placeholder="Filter repos&#8230;">
-    <div id="repo-list">
-      <div class="repo-status" x-show="loading">Loading repos&#8230;</div>
-      <div class="repo-status" x-show="!loading && error && repos.length === 0" x-text="error"></div>
-      <div class="repo-warning" x-show="!loading && error && repos.length > 0" x-text="'&#9888; ' + error"></div>
-      <template x-for="repo in filteredRepos" :key="repo">
-        <label class="repo-item">
-          <input type="checkbox" :value="repo" x-model="selected">
-          <span x-text="repo"></span>
-        </label>
-      </template>
-      <div class="repo-status"
-        x-show="!loading && filteredRepos.length === 0 && repos.length > 0">
-        No repos match filter
+      <label>
+        <span class="field-label">GITHUB PAT</span>
+        <input type="password" x-model="src.pat" placeholder="ghp_&#8230;" autocomplete="off"
+          @change="validatePat(src)">
+        <div x-html="src.status"></div>
+      </label>
+
+      <label>
+        <span class="field-label">GITHUB USERNAME</span>
+        <input type="text" x-model="src.username" placeholder="auto-detected from PAT if blank">
+        <p class="hint">Used to distinguish your activity from others on this account</p>
+      </label>
+
+      <div class="repo-chooser">
+        <span class="field-label">REPOS TO WATCH</span>
+        <input class="repo-search" type="text" x-model="src.search" placeholder="Filter repos&#8230;">
+        <div class="repo-list">
+          <div class="repo-status" x-show="src.loading">Loading repos&#8230;</div>
+          <div class="repo-status" x-show="!src.loading && src.error && src.available.length === 0" x-text="src.error"></div>
+          <div class="repo-warning" x-show="!src.loading && src.error && src.available.length > 0" x-text="'&#9888; ' + src.error"></div>
+          <template x-for="repo in filtered(src)" :key="repo">
+            <label class="repo-item">
+              <input type="checkbox" :value="repo" x-model="src.repos">
+              <span x-text="repo"></span>
+            </label>
+          </template>
+          <div class="repo-status"
+            x-show="!src.loading && filtered(src).length === 0 && src.available.length > 0">
+            No repos match filter
+          </div>
+        </div>
+        <div class="repo-footer">
+          <span class="hint" x-text="src.repos.length + ' selected'"></span>
+          <button type="button" class="add-btn" @click="loadRepos(src)">RELOAD</button>
+        </div>
+        <div class="add-repo-row">
+          <input type="text" placeholder="owner/repo (manual add)"
+            @keydown.enter.prevent="addManual(src, $event.target.value); $event.target.value=''">
+          <button type="button" class="add-btn"
+            @click="addManual(src, $event.target.previousElementSibling.value); $event.target.previousElementSibling.value=''">ADD</button>
+        </div>
       </div>
     </div>
-    <div class="repo-footer">
-      <span class="hint" x-text="selected.length + ' selected'"></span>
-      <span class="hint">Not seeing a repo? Grant the PAT access, save, and reload.</span>
-    </div>
-    <div class="add-repo-row">
-      <input type="text" x-ref="manualInput" placeholder="owner/repo (manual add)"
-        @keydown.enter.prevent="addManual()">
-      <button type="button" class="add-btn" @click="addManual()">ADD</button>
-    </div>
-    <textarea name="github_repos" style="display:none"
-      x-effect="$el.value = selected.join('\n')"></textarea>
-  </div>
+  </template>
+
+  <button type="button" class="add-btn" @click="addSource()">+ ADD SOURCE</button>
+  <textarea name="github_sources" style="display:none" x-effect="$el.value = payload"></textarea>
 
   <label>
     <span class="field-label">POLL INTERVAL (seconds, min 30)</span>
@@ -422,7 +473,7 @@ function repoChooser() {{
 
   <button type="submit">SAVE CONFIG</button>
 </form>
-<script type="application/json" id="current-repos">{current_repos_json}</script>
+<script type="application/json" id="initial-sources">{sources_json}</script>
 </body>
 </html>"##))
 }
@@ -431,9 +482,8 @@ function repoChooser() {{
 
 #[derive(Deserialize)]
 struct ConfigForm {
-    github_pat:       String,
-    github_username:  String,
-    github_repos:     String,
+    /// JSON array of `{pat, username, repos}` objects, emitted by the config UI.
+    github_sources:   String,
     github_poll_secs: u64,
 
     beszel_url:    String,
@@ -459,51 +509,55 @@ async fn save_handler(
     State(config): State<ConfigRef>,
     Form(form):    Form<ConfigForm>,
 ) -> impl IntoResponse {
-    let repos: Vec<String> = form.github_repos
-        .lines()
-        .map(str::trim)
-        .filter(|s| !s.is_empty() && s.contains('/'))
-        .map(str::to_string)
-        .collect();
+    // Parse the source list emitted by the UI, then sanitize each entry:
+    // drop sources with no PAT, keep only well-formed `owner/repo` names, and
+    // auto-fill a blank username from the PAT's authenticated login.
+    let parsed: Vec<GithubSource> =
+        serde_json::from_str(&form.github_sources).unwrap_or_default();
+    let mut github_sources = Vec::with_capacity(parsed.len());
+    for src in parsed {
+        let pat = src.pat.trim().to_string();
+        if pat.is_empty() {
+            continue;
+        }
+        let repos: Vec<String> = src.repos
+            .into_iter()
+            .map(|r| r.trim().to_string())
+            .filter(|r| !r.is_empty() && r.contains('/'))
+            .collect();
+        let username = if src.username.trim().is_empty() {
+            github_username_for_pat(&pat).await.unwrap_or_default()
+        } else {
+            src.username.trim().to_string()
+        };
+        github_sources.push(GithubSource { pat, username, repos });
+    }
 
-    let pat = form.github_pat.trim().to_string();
+    // Start from the running config so web_config_port and any future
+    // non-form fields are preserved, then overlay the submitted values.
+    let mut new_cfg = config.read().unwrap().clone();
+    new_cfg.github_sources   = github_sources;
+    new_cfg.github_poll_secs = form.github_poll_secs.max(30);
 
-    let username = if form.github_username.trim().is_empty() && !pat.is_empty() {
-        github_username_for_pat(&pat).await.unwrap_or_default()
-    } else {
-        form.github_username.trim().to_string()
-    };
+    new_cfg.beszel_url   = form.beszel_url.trim().trim_end_matches('/').to_string();
+    new_cfg.vps_name     = form.vps_name.trim().to_string();
+    new_cfg.vps_hostname = form.vps_hostname.trim().to_string();
+    new_cfg.vps_ip       = form.vps_ip.trim().to_string();
 
-    // web_config_port has no form field — preserve the running value.
-    let web_config_port = config.read().unwrap().web_config_port;
+    new_cfg.probe_host = form.probe_host.trim().to_string();
+    new_cfg.probe_port = form.probe_port;
 
-    let new_cfg = AppConfig {
-        github_pat:       pat,
-        github_username:  username,
-        github_repos:     repos,
-        github_poll_secs: form.github_poll_secs.max(30),
-        web_config_port,
+    new_cfg.nas_hostname = form.nas_hostname.trim().to_string();
+    new_cfg.nas_ip       = form.nas_ip.trim().to_string();
 
-        beszel_url:    form.beszel_url.trim().trim_end_matches('/').to_string(),
-        vps_name:      form.vps_name.trim().to_string(),
-        vps_hostname:  form.vps_hostname.trim().to_string(),
-        vps_ip:        form.vps_ip.trim().to_string(),
+    new_cfg.ha_hostname = form.ha_hostname.trim().to_string();
+    new_cfg.ha_ip       = form.ha_ip.trim().to_string();
 
-        probe_host:    form.probe_host.trim().to_string(),
-        probe_port:    form.probe_port,
-
-        nas_hostname:  form.nas_hostname.trim().to_string(),
-        nas_ip:        form.nas_ip.trim().to_string(),
-
-        ha_hostname:   form.ha_hostname.trim().to_string(),
-        ha_ip:         form.ha_ip.trim().to_string(),
-
-        fan_serial_port: form.fan_serial_port.trim().to_string(),
-        // Keep warn <= crit so the threshold branches in fan_telem.rs can't
-        // straddle an inverted range (which would silently fire neither).
-        fan_temp_warn_c: form.fan_temp_warn_c.min(form.fan_temp_crit_c),
-        fan_temp_crit_c: form.fan_temp_crit_c.max(form.fan_temp_warn_c),
-    };
+    new_cfg.fan_serial_port = form.fan_serial_port.trim().to_string();
+    // Keep warn <= crit so the threshold branches in fan_telem.rs can't
+    // straddle an inverted range (which would silently fire neither).
+    new_cfg.fan_temp_warn_c = form.fan_temp_warn_c.min(form.fan_temp_crit_c);
+    new_cfg.fan_temp_crit_c = form.fan_temp_crit_c.max(form.fan_temp_warn_c);
 
     if let Err(e) = new_cfg.save() {
         eprintln!("web_config: failed to save config: {e}");
