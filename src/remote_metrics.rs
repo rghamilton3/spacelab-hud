@@ -13,52 +13,43 @@ static AUTH_TOKEN: Mutex<Option<(String, String, String)>> = Mutex::new(None);
 
 // ── Public types ──────────────────────────────────────────────────────
 
-/// Runtime-configurable Beszel connection settings for a single monitored
-/// system (VPS, NAS, or Home Assistant), snapshotted from
-/// [`crate::config::AppConfig`] each polling cycle. All targets share one
-/// Beszel instance (`beszel_url`) and differ only by `system_name`.
+/// Hub-level Beszel connection settings, snapshotted from
+/// [`crate::config::AppConfig`] each polling cycle. The hub is enumerated for
+/// all its systems, which are then ordered/filtered per config and turned into
+/// one screen each.
 #[derive(Clone)]
-pub struct BeszelTarget {
+pub struct BeszelHub {
     /// Base URL of the Beszel instance, e.g. `http://host:8090`.
-    pub beszel_url:  String,
+    pub beszel_url:     String,
     /// Beszel user email used to obtain an API auth token. A read-only user
     /// with the monitored systems shared to it is sufficient.
-    pub email:       String,
+    pub email:          String,
     /// Beszel user password.
-    pub password:    String,
-    /// System name as registered in Beszel. Also shown on the panel as its
-    /// identity — Beszel already knows the host, so there's no separately
-    /// configured hostname/IP to display.
-    pub system_name: String,
+    pub password:       String,
+    /// Ordering prefix: listed system names sort first, in this order.
+    pub system_order:   Vec<String>,
+    /// System names to hide entirely.
+    pub hidden_systems: Vec<String>,
 }
 
-impl BeszelTarget {
-    pub fn vps(cfg: &crate::config::AppConfig) -> Self {
+impl BeszelHub {
+    pub fn from_config(cfg: &crate::config::AppConfig) -> Self {
         Self {
-            beszel_url:  cfg.beszel_url.clone(),
-            email:       cfg.beszel_email.clone(),
-            password:    cfg.beszel_password.clone(),
-            system_name: cfg.vps_name.clone(),
+            beszel_url:     cfg.beszel_url.clone(),
+            email:          cfg.beszel_email.clone(),
+            password:       cfg.beszel_password.clone(),
+            system_order:   cfg.system_order.clone(),
+            hidden_systems: cfg.hidden_systems.clone(),
         }
     }
+}
 
-    pub fn nas(cfg: &crate::config::AppConfig) -> Self {
-        Self {
-            beszel_url:  cfg.beszel_url.clone(),
-            email:       cfg.beszel_email.clone(),
-            password:    cfg.beszel_password.clone(),
-            system_name: cfg.nas_name.clone(),
-        }
-    }
-
-    pub fn ha(cfg: &crate::config::AppConfig) -> Self {
-        Self {
-            beszel_url:  cfg.beszel_url.clone(),
-            email:       cfg.beszel_email.clone(),
-            password:    cfg.beszel_password.clone(),
-            system_name: cfg.ha_name.clone(),
-        }
-    }
+/// One system as discovered on the hub, before its detailed stats are fetched.
+struct SystemBrief {
+    id:          String,
+    name:        String,
+    uptime_secs: u64,
+    load:        Vec<f64>,
 }
 
 pub struct RemoteAlert {
@@ -69,23 +60,6 @@ pub struct RemoteAlert {
 }
 
 // ── ServiceMetrics constructors ───────────────────────────────────────
-
-pub fn offline_metrics(system: &str) -> crate::ServiceMetrics {
-    crate::ServiceMetrics {
-        hostname:  system.into(),
-        reachable: false,
-        uptime:    "—".into(),
-        load_avg:  "—  —  —".into(),
-        cpu_usage: "—".into(),
-        cpu_pct:   0.0,
-        cpu_temp:  "—".into(),
-        temp_pct:  0.0,
-        ram:       "—".into(),
-        ram_pct:   0.0,
-        disk:      "—".into(),
-        disk_pct:  0.0,
-    }
-}
 
 fn online_no_metrics(system: &str) -> crate::ServiceMetrics {
     crate::ServiceMetrics {
@@ -178,9 +152,8 @@ pub fn beszel_alive(beszel_url: &str) -> bool {
     )
 }
 
-struct BeszelMetrics {
-    uptime_secs:   u64,
-    load:          Vec<f64>,
+/// Latest 1-minute stats for a system.
+struct Stats {
     cpu_pct:       f64,
     ram_used_gb:   f64,
     ram_total_gb:  f64,
@@ -190,18 +163,16 @@ struct BeszelMetrics {
     disk_pct:      f64,
 }
 
-fn fetch_beszel_metrics(
-    beszel_url:  &str,
-    system_name: &str,
-    email:       &str,
-    password:    &str,
-) -> Option<BeszelMetrics> {
+/// Enumerate every system the hub knows about (no name filter), in hub order.
+/// Ordering/hiding is applied separately ([`order_systems`]) so it stays a
+/// pure, testable transform.
+fn fetch_all_systems(beszel_url: &str, email: &str, password: &str) -> Option<Vec<SystemBrief>> {
     let token = get_or_refresh_token(beszel_url, email, password)?;
 
-    // ── Step 1: resolve system ID and uptime ──────────────────────────
     #[derive(Deserialize)]
     struct SystemRecord {
         id:   String,
+        name: String,
         info: SystemInfo,
     }
     #[derive(Deserialize)]
@@ -213,9 +184,8 @@ fn fetch_beszel_metrics(
     struct SystemsList { items: Vec<SystemRecord> }
 
     let resp = ureq::get(&format!(
-        "{}/api/collections/systems/records?filter=name%3D%22{}%22&perPage=1",
-        beszel_url,
-        percent_encode(system_name)
+        "{}/api/collections/systems/records?perPage=200&sort=name",
+        beszel_url
     ))
     .set("Authorization", &token)
     .timeout(TIMEOUT)
@@ -224,21 +194,26 @@ fn fetch_beszel_metrics(
     let resp = match resp {
         Ok(r) => r,
         Err(ureq::Error::Status(401, _)) => { invalidate_token(); return None; }
-        Err(e) => { eprintln!("beszel systems fetch error: {e}"); return None; }
+        Err(e) => { eprintln!("beszel systems list error: {e}"); return None; }
     };
 
-    let systems: SystemsList = resp.into_json().ok()?;
-    let system = systems.items.into_iter().next()?;
+    let list: SystemsList = resp.into_json().ok()?;
+    Some(list.items.into_iter().map(|s| SystemBrief {
+        id:          s.id,
+        name:        s.name,
+        uptime_secs: s.info.u.unwrap_or(0.0) as u64,
+        load:        s.info.la.unwrap_or_default(),
+    }).collect())
+}
 
-    let system_id   = system.id;
-    let uptime_secs = system.info.u.unwrap_or(0.0) as u64;
-    let load        = system.info.la.unwrap_or_default();
+/// Fetch the latest 1-minute stats for a system by its record id.
+fn fetch_stats(beszel_url: &str, system_id: &str, email: &str, password: &str) -> Option<Stats> {
+    let token = get_or_refresh_token(beszel_url, email, password)?;
 
-    // ── Step 2: fetch latest 1-minute stats ───────────────────────────
     #[derive(Deserialize)]
-    struct StatsRecord { stats: Stats }
+    struct StatsRecord { stats: RawStats }
     #[derive(Deserialize)]
-    struct Stats {
+    struct RawStats {
         cpu: f64,
         m:   f64,
         mu:  f64,
@@ -250,27 +225,24 @@ fn fetch_beszel_metrics(
     #[derive(Deserialize)]
     struct StatsList { items: Vec<StatsRecord> }
 
-    let resp2 = ureq::get(&format!(
+    let resp = ureq::get(&format!(
         "{}/api/collections/system_stats/records?sort=-created&perPage=1&filter=system%3D%22{}%22%26%26type%3D%221m%22",
         beszel_url,
-        percent_encode(&system_id)
+        percent_encode(system_id)
     ))
     .set("Authorization", &token)
     .timeout(TIMEOUT)
     .call();
 
-    let resp2 = match resp2 {
+    let resp = match resp {
         Ok(r) => r,
         Err(ureq::Error::Status(401, _)) => { invalidate_token(); return None; }
         Err(e) => { eprintln!("beszel stats fetch error: {e}"); return None; }
     };
 
-    let stats_list: StatsList = resp2.into_json().ok()?;
-    let s = stats_list.items.into_iter().next()?.stats;
-
-    Some(BeszelMetrics {
-        uptime_secs,
-        load,
+    let list: StatsList = resp.into_json().ok()?;
+    let s = list.items.into_iter().next()?.stats;
+    Some(Stats {
         cpu_pct:       s.cpu,
         ram_used_gb:   s.mu,
         ram_total_gb:  s.m,
@@ -281,58 +253,97 @@ fn fetch_beszel_metrics(
     })
 }
 
+/// Order and filter discovered systems for display. Systems whose name is in
+/// `order` come first, in that order; the rest follow in their original (hub)
+/// order. Names in `hidden` are dropped. Pure — no network — so it's unit
+/// tested directly.
+fn order_systems(
+    systems: Vec<SystemBrief>,
+    order:   &[String],
+    hidden:  &[String],
+) -> Vec<SystemBrief> {
+    let mut visible: Vec<SystemBrief> = systems
+        .into_iter()
+        .filter(|s| !hidden.iter().any(|h| h == &s.name))
+        .collect();
+    // Stable sort keeps unlisted systems in hub order behind the listed ones.
+    visible.sort_by_key(|s| order.iter().position(|o| o == &s.name).unwrap_or(usize::MAX));
+    visible
+}
+
 // ── Beszel system fetch ───────────────────────────────────────────────
 
-impl BeszelTarget {
-    /// Fetch live metrics for this Beszel system, given the hub's liveness.
-    ///
-    /// An unconfigured target (blank Beszel URL, system name, or admin
-    /// credentials) short-circuits to an offline panel without touching the
-    /// network, so panels the user hasn't set up stay clean rather than
-    /// spamming failed requests. All three targets share one Beszel instance,
-    /// so the caller probes [`beszel_alive`] once per cycle and passes the
-    /// result to all three, avoiding two redundant round-trips.
-    pub fn fetch_assuming_alive(&self, hub_alive: bool) -> crate::ServiceMetrics {
-        if self.beszel_url.is_empty()
-            || self.system_name.is_empty()
-            || self.email.is_empty()
-            || self.password.is_empty()
-        {
-            return offline_metrics(&self.system_name);
-        }
+/// Build the ordered, filtered list of per-system metrics for the UI.
+///
+/// Blank hub credentials or a dead hub short-circuit to an empty list, so the
+/// carousel shows just its fixed screens rather than spamming failed requests.
+/// The caller probes [`beszel_alive`] once per cycle and passes the result in.
+pub fn fetch_systems(hub: &BeszelHub, hub_alive: bool) -> Vec<crate::ServiceMetrics> {
+    if hub.beszel_url.is_empty()
+        || hub.email.is_empty()
+        || hub.password.is_empty()
+        || !hub_alive
+    {
+        return vec![];
+    }
 
-        if !hub_alive {
-            return offline_metrics(&self.system_name);
-        }
+    let systems = match fetch_all_systems(&hub.beszel_url, &hub.email, &hub.password) {
+        Some(s) => s,
+        None    => return vec![],
+    };
 
-        let m = match fetch_beszel_metrics(
-            &self.beszel_url,
-            &self.system_name,
-            &self.email,
-            &self.password,
-        ) {
-            Some(m) => m,
-            None    => return online_no_metrics(&self.system_name),
-        };
+    order_systems(systems, &hub.system_order, &hub.hidden_systems)
+        .into_iter()
+        .map(|brief| {
+            match fetch_stats(&hub.beszel_url, &brief.id, &hub.email, &hub.password) {
+                Some(stats) => service_metrics(&brief, &stats),
+                None        => online_no_metrics(&brief.name),
+            }
+        })
+        .collect()
+}
 
-        let load1  = m.load.first()  .copied().unwrap_or(0.0);
-        let load5  = m.load.get(1)   .copied().unwrap_or(0.0);
-        let load15 = m.load.get(2)   .copied().unwrap_or(0.0);
+/// Discover the names of every system on the hub, in hub order, for the config
+/// UI's system manager. Returns `None` if the hub can't be reached or auth
+/// fails, so the caller can fall back to the saved configuration.
+pub fn discover_system_names(beszel_url: &str, email: &str, password: &str) -> Option<Vec<String>> {
+    fetch_all_systems(beszel_url, email, password)
+        .map(|systems| systems.into_iter().map(|s| s.name).collect())
+}
 
-        crate::ServiceMetrics {
-            hostname:  self.system_name.as_str().into(),
-            reachable: true,
-            uptime:    fmt_uptime(m.uptime_secs).into(),
-            load_avg:  format!("{:.2}  {:.2}  {:.2}", load1, load5, load15).into(),
-            cpu_usage: format!("{:.1}%", m.cpu_pct).into(),
-            cpu_pct:   (m.cpu_pct / 100.0).clamp(0.0, 1.0) as f32,
-            cpu_temp:  "—".into(),
-            temp_pct:  0.0,
-            ram:       format!("{:.1} / {:.1} GB", m.ram_used_gb, m.ram_total_gb).into(),
-            ram_pct:   (m.ram_pct / 100.0).clamp(0.0, 1.0) as f32,
-            disk:      format!("{:.1} / {:.1} GB", m.disk_used_gb, m.disk_total_gb).into(),
-            disk_pct:  (m.disk_pct / 100.0).clamp(0.0, 1.0) as f32,
-        }
+/// Worst stoplight level across a set of systems: 0 nominal, 1 warn, 2 crit.
+/// Mirrors the Slint-side rule so the overview header and per-screen colors
+/// agree. An empty set is nominal.
+pub fn worst_level(systems: &[crate::ServiceMetrics]) -> i32 {
+    systems.iter().map(level_of).max().unwrap_or(0)
+}
+
+fn level_of(m: &crate::ServiceMetrics) -> i32 {
+    if !m.reachable {
+        return 2;
+    }
+    let worst = m.cpu_pct.max(m.temp_pct).max(m.ram_pct).max(m.disk_pct);
+    if worst > 0.85 { 2 } else if worst > 0.70 { 1 } else { 0 }
+}
+
+fn service_metrics(brief: &SystemBrief, s: &Stats) -> crate::ServiceMetrics {
+    let load1  = brief.load.first().copied().unwrap_or(0.0);
+    let load5  = brief.load.get(1).copied().unwrap_or(0.0);
+    let load15 = brief.load.get(2).copied().unwrap_or(0.0);
+
+    crate::ServiceMetrics {
+        hostname:  brief.name.as_str().into(),
+        reachable: true,
+        uptime:    fmt_uptime(brief.uptime_secs).into(),
+        load_avg:  format!("{:.2}  {:.2}  {:.2}", load1, load5, load15).into(),
+        cpu_usage: format!("{:.1}%", s.cpu_pct).into(),
+        cpu_pct:   (s.cpu_pct / 100.0).clamp(0.0, 1.0) as f32,
+        cpu_temp:  "—".into(),
+        temp_pct:  0.0,
+        ram:       format!("{:.1} / {:.1} GB", s.ram_used_gb, s.ram_total_gb).into(),
+        ram_pct:   (s.ram_pct / 100.0).clamp(0.0, 1.0) as f32,
+        disk:      format!("{:.1} / {:.1} GB", s.disk_used_gb, s.disk_total_gb).into(),
+        disk_pct:  (s.disk_pct / 100.0).clamp(0.0, 1.0) as f32,
     }
 }
 
@@ -365,5 +376,34 @@ mod tests {
         // Characters that would corrupt the `filter=` expression are escaped.
         assert_eq!(percent_encode(r#"a&b="c"%"#), "a%26b%3D%22c%22%25");
         assert_eq!(percent_encode("a b"), "a%20b");
+    }
+
+    fn brief(name: &str) -> SystemBrief {
+        SystemBrief { id: name.into(), name: name.into(), uptime_secs: 0, load: vec![] }
+    }
+
+    fn names(systems: Vec<SystemBrief>) -> Vec<String> {
+        systems.into_iter().map(|s| s.name).collect()
+    }
+
+    #[test]
+    fn order_systems_lists_ordered_first_then_hub_order() {
+        let systems = vec![brief("c"), brief("a"), brief("b"), brief("d")];
+        let order   = vec!["b".to_string(), "a".to_string()];
+        // b, a come first (config order); c, d follow in hub order.
+        assert_eq!(names(order_systems(systems, &order, &[])), ["b", "a", "c", "d"]);
+    }
+
+    #[test]
+    fn order_systems_drops_hidden() {
+        let systems = vec![brief("a"), brief("b"), brief("c")];
+        let hidden  = vec!["b".to_string()];
+        assert_eq!(names(order_systems(systems, &[], &hidden)), ["a", "c"]);
+    }
+
+    #[test]
+    fn order_systems_default_is_hub_order() {
+        let systems = vec![brief("z"), brief("a"), brief("m")];
+        assert_eq!(names(order_systems(systems, &[], &[])), ["z", "a", "m"]);
     }
 }

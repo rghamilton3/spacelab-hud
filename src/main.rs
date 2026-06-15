@@ -64,12 +64,9 @@ fn main() -> Result<(), Box<dyn Error>> {
     push_local_metrics(&ui, collector.collect());
     ui.set_clock_str(current_clock());
 
-    // ── NAS + Home Assistant — start offline ─────────────────────────
-    {
-        let cfg = cfg_ref.read().unwrap();
-        ui.set_nas_metrics(remote_metrics::offline_metrics(&cfg.nas_name));
-        ui.set_ha_metrics(remote_metrics::offline_metrics(&cfg.ha_name));
-    }
+    // ── Beszel systems — start empty until the first poll populates them ─
+    ui.set_systems(slint::ModelRc::new(slint::VecModel::from(vec![])));
+    ui.set_systems_worst_level(0);
 
     // ── GitHub initial state — "not configured" until watcher runs ───
     ui.set_github_configured(false);
@@ -134,29 +131,22 @@ fn main() -> Result<(), Box<dyn Error>> {
         std::thread::sleep(NETWORK_PROBE_INTERVAL);
     });
 
-    // ── Remote metrics (Beszel: VPS, NAS, HA) + system alerts ────────
+    // ── Remote metrics (Beszel, one screen per system) + system alerts ─
     let ui_weak_remote   = ui.as_weak();
     let shared_alerts_2  = shared_alerts.clone();
     let cfg_ref_remote   = cfg_ref.clone();
     std::thread::spawn(move || loop {
-        // Snapshot all three Beszel targets from the live config in one read,
-        // then release the lock before touching the network.
-        let (vps_target, nas_target, ha_target) = {
+        // Snapshot the hub config in one read, then release the lock before
+        // touching the network.
+        let hub = {
             let cfg = cfg_ref_remote.read().unwrap();
-            (
-                remote_metrics::BeszelTarget::vps(&cfg),
-                remote_metrics::BeszelTarget::nas(&cfg),
-                remote_metrics::BeszelTarget::ha(&cfg),
-            )
+            remote_metrics::BeszelHub::from_config(&cfg)
         };
-        let (vps, nas, ha, sys_alerts) = match std::panic::catch_unwind(|| {
-            // All three targets share one Beszel hub; probe its health once and
-            // reuse the result rather than each target re-checking it.
-            let hub_alive = remote_metrics::beszel_alive(&vps_target.beszel_url);
+        let (systems, sys_alerts) = match std::panic::catch_unwind(|| {
+            // Probe the hub's health once, then enumerate + fetch every system.
+            let hub_alive = remote_metrics::beszel_alive(&hub.beszel_url);
             (
-                vps_target.fetch_assuming_alive(hub_alive),
-                nas_target.fetch_assuming_alive(hub_alive),
-                ha_target.fetch_assuming_alive(hub_alive),
+                remote_metrics::fetch_systems(&hub, hub_alive),
                 remote_metrics::RemoteAlert::fetch_all(),
             )
         }) {
@@ -182,12 +172,12 @@ fn main() -> Result<(), Box<dyn Error>> {
             }).collect();
         }
 
+        let worst = remote_metrics::worst_level(&systems);
         let ui = ui_weak_remote.clone();
         if let Err(e) = slint::invoke_from_event_loop(move || {
             let Some(ui) = ui.upgrade() else { return };
-            ui.set_vps_metrics(vps);
-            ui.set_nas_metrics(nas);
-            ui.set_ha_metrics(ha);
+            ui.set_systems(slint::ModelRc::new(slint::VecModel::from(systems)));
+            ui.set_systems_worst_level(worst);
         }) {
             eprintln!("remote_metrics: event loop gone ({e:?}), exiting thread");
             return;

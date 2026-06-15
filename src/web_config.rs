@@ -21,6 +21,15 @@ fn esc(s: &str) -> String {
         .replace('>', "&gt;")
 }
 
+/// Splits a textarea value into a clean list of Beszel system names: one per
+/// line, trimmed, with blank lines dropped.
+fn parse_name_lines(s: &str) -> Vec<String> {
+    s.lines()
+        .map(|l| l.trim().to_string())
+        .filter(|l| !l.is_empty())
+        .collect()
+}
+
 // ── GitHub API helpers ────────────────────────────────────────────────
 
 async fn gh_get<T: serde::de::DeserializeOwned>(pat: &str, url: &str) -> Result<T, String> {
@@ -133,6 +142,54 @@ async fn validate_pat_handler(Query(q): Query<PatQuery>) -> impl IntoResponse {
     }
 }
 
+// ── Route: GET /systems ───────────────────────────────────────────────
+
+#[derive(Serialize)]
+struct SystemsResp {
+    systems: Vec<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    error: Option<String>,
+}
+
+/// Live-discovers the systems on the configured Beszel hub for the system
+/// manager. Uses the *stored* credentials (never echoed to the page), so the
+/// user must save URL + login before this returns anything.
+async fn systems_handler(State(config): State<ConfigRef>) -> impl IntoResponse {
+    let (url, email, password) = {
+        let cfg = config.read().unwrap();
+        (cfg.beszel_url.clone(), cfg.beszel_email.clone(), cfg.beszel_password.clone())
+    };
+    if url.is_empty() || email.is_empty() || password.is_empty() {
+        return Json(SystemsResp {
+            systems: vec![],
+            error: Some("Save the Beszel URL, email, and password above first.".to_string()),
+        })
+        .into_response();
+    }
+    // remote_metrics uses blocking ureq; keep it off the async runtime threads.
+    let discovered = tokio::task::spawn_blocking(move || {
+        crate::remote_metrics::discover_system_names(&url, &email, &password)
+    })
+    .await;
+
+    match discovered {
+        Ok(Some(systems)) => Json(SystemsResp { systems, error: None }).into_response(),
+        Ok(None) => Json(SystemsResp {
+            systems: vec![],
+            error: Some("Could not reach the Beszel hub or authentication failed.".to_string()),
+        })
+        .into_response(),
+        Err(e) => {
+            eprintln!("web_config: systems discovery task failed: {e}");
+            Json(SystemsResp {
+                systems: vec![],
+                error: Some("Internal error querying the hub.".to_string()),
+            })
+            .into_response()
+        }
+    }
+}
+
 // ── Route: GET / ──────────────────────────────────────────────────────
 
 pub async fn serve(config: ConfigRef, port: u16) {
@@ -141,6 +198,7 @@ pub async fn serve(config: ConfigRef, port: u16) {
         .route("/config", post(save_handler))
         .route("/repos", get(repos_handler))
         .route("/validate-pat", get(validate_pat_handler))
+        .route("/systems", get(systems_handler))
         .with_state(config);
 
     let addr = format!("0.0.0.0:{port}");
@@ -152,7 +210,13 @@ pub async fn serve(config: ConfigRef, port: u16) {
 }
 
 async fn ui_handler(State(config): State<ConfigRef>) -> impl IntoResponse {
-    let cfg  = config.read().unwrap().clone();
+    let cfg = config.read().unwrap().clone();
+    Html(render_config_page(&cfg))
+}
+
+/// Renders the full config page HTML. Pure (no I/O), so a test can assert the
+/// template renders without panicking and wires up the dynamic system manager.
+fn render_config_page(cfg: &crate::config::AppConfig) -> String {
     // Escape every user-controlled string before it lands in an HTML attribute.
     let poll = cfg.github_poll_secs;
     // Seed the per-source chooser. Embedded in a <script type="application/json">
@@ -169,16 +233,21 @@ async fn ui_handler(State(config): State<ConfigRef>) -> impl IntoResponse {
     // Signals to the password field whether a secret is already stored, so the
     // placeholder can say "leave blank to keep current" instead of echoing it.
     let beszel_pw_set   = if cfg.beszel_password.is_empty() { "" } else { "saved — leave blank to keep" };
-    let vps_name        = esc(&cfg.vps_name);
+    // Seeds for the live system manager, embedded as JSON (same escaping model
+    // as the GitHub sources: encoded in a <script> block, `</` neutralized).
+    let system_order_json = serde_json::to_string(&cfg.system_order)
+        .unwrap_or_else(|_| "[]".to_string())
+        .replace("</", "<\\/");
+    let hidden_systems_json = serde_json::to_string(&cfg.hidden_systems)
+        .unwrap_or_else(|_| "[]".to_string())
+        .replace("</", "<\\/");
     let probe_host      = esc(&cfg.probe_host);
     let probe_port      = cfg.probe_port;
-    let nas_name        = esc(&cfg.nas_name);
-    let ha_name         = esc(&cfg.ha_name);
     let fan_serial_port = esc(&cfg.fan_serial_port);
     let fan_temp_warn_c = cfg.fan_temp_warn_c;
     let fan_temp_crit_c = cfg.fan_temp_crit_c;
 
-    Html(format!(r##"<!DOCTYPE html>
+    format!(r##"<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="utf-8">
@@ -252,6 +321,57 @@ function configApp() {{
     }},
   }};
 }}
+
+// Live Beszel system manager: seeds from the saved order/hidden lists, then
+// merges in whatever the hub currently reports. Each row carries an order
+// position (reorder with the arrows) and a show/hide checkbox. Newly-seen
+// systems are appended visible; saved systems the hub no longer reports are
+// kept (tagged "offline") so config survives an unreachable hub.
+function systemsManager() {{
+  return {{
+    rows: [], loading: false, error: '', loaded: false,
+
+    init() {{
+      const order  = JSON.parse(document.getElementById('initial-order').textContent);
+      const hidden = JSON.parse(document.getElementById('initial-hidden').textContent);
+      const hiddenSet = new Set(hidden);
+      this.rows = order.map(name => ({{ name, hidden: hiddenSet.has(name), discovered: false }}));
+      for (const name of hidden)
+        if (!this.rows.some(r => r.name === name))
+          this.rows.push({{ name, hidden: true, discovered: false }});
+      this.discover();
+    }},
+
+    async discover() {{
+      this.loading = true; this.error = '';
+      try {{
+        const resp = await fetch('/systems');
+        const data = await resp.json();
+        if (data.error) this.error = data.error;
+        for (const name of (data.systems || [])) {{
+          const row = this.rows.find(r => r.name === name);
+          if (row) row.discovered = true;
+          else this.rows.push({{ name, hidden: false, discovered: true }});
+        }}
+        this.loaded = true;
+      }} catch (_) {{
+        this.error = 'Could not reach the Beszel hub — showing saved configuration.';
+      }}
+      this.loading = false;
+    }},
+
+    move(i, dir) {{
+      const j = i + dir;
+      if (j < 0 || j >= this.rows.length) return;
+      [this.rows[i], this.rows[j]] = [this.rows[j], this.rows[i]];
+    }},
+
+    get shownCount()  {{ return this.rows.filter(r => !r.hidden).length; }},
+    get hiddenCount() {{ return this.rows.filter(r =>  r.hidden).length; }},
+    get orderPayload()  {{ return this.rows.map(r => r.name).join('\n'); }},
+    get hiddenPayload() {{ return this.rows.filter(r => r.hidden).map(r => r.name).join('\n'); }},
+  }};
+}}
 </script>
 <style>
   * {{ box-sizing: border-box; margin: 0; padding: 0; }}
@@ -306,6 +426,21 @@ function configApp() {{
     color: #d0e8ff; border: 1px solid #1e2d4a; font-family: monospace;
     font-size: 12px; letter-spacing: 1px; cursor: pointer; border-radius: 4px; }}
   .add-btn:hover {{ background: #2a4e7a; }}
+  /* System manager */
+  .sys-item {{ display: flex; align-items: center; gap: 10px; padding: 8px 12px;
+    font-size: 13px; border-bottom: 1px solid #101a2c; }}
+  .sys-item:last-child {{ border-bottom: none; }}
+  .sys-item input[type="checkbox"] {{ width: auto; flex-shrink: 0; cursor: pointer; }}
+  .sys-name {{ color: #d0e8ff; }}
+  .sys-name.hidden {{ color: #3e6ea0; text-decoration: line-through; }}
+  .sys-tag {{ font-size: 10px; letter-spacing: 1px; color: #c8a800;
+    border: 1px solid #4a4010; border-radius: 3px; padding: 1px 5px; }}
+  .sys-spacer {{ flex: 1; }}
+  .ord-btn {{ width: auto; margin: 0; padding: 4px 11px; background: #1e3a5f;
+    color: #d0e8ff; border: 1px solid #1e2d4a; font-family: monospace;
+    font-size: 13px; cursor: pointer; border-radius: 4px; }}
+  .ord-btn:hover:not(:disabled) {{ background: #2a4e7a; }}
+  .ord-btn:disabled {{ opacity: 0.3; cursor: default; }}
 </style>
 </head>
 <body>
@@ -391,12 +526,12 @@ function configApp() {{
     <input type="number" name="github_poll_secs" value="{poll}" min="30" max="3600">
   </label>
 
-  <h2>VPS / BESZEL</h2>
+  <h2>BESZEL</h2>
 
   <label>
     <span class="field-label">BESZEL URL</span>
     <input type="text" name="beszel_url" value="{beszel_url}" placeholder="http://host:8090">
-    <p class="hint">Base URL of the Beszel monitoring instance. All monitored systems (VPS, NAS, HA) share this one instance.</p>
+    <p class="hint">Base URL of the Beszel monitoring instance. Every system on this hub gets its own screen automatically.</p>
   </label>
 
   <div class="field-row">
@@ -411,11 +546,36 @@ function configApp() {{
     </label>
   </div>
 
-  <label>
-    <span class="field-label">BESZEL SYSTEM NAME</span>
-    <input type="text" name="vps_name" value="{vps_name}" placeholder="spacevps">
-    <p class="hint">System name as registered in Beszel (used to look up the record, and shown on the panel — Beszel already knows the host)</p>
-  </label>
+  <div x-data="systemsManager()" x-init="init()">
+    <span class="field-label">SYSTEMS &#8212; SCREENS</span>
+    <p class="hint">Every system on the hub gets its own screen. Reorder with the
+      arrows (top = first after GitHub); uncheck to hide. Newly-added systems
+      appear automatically. Save the URL + credentials above first, then reload.</p>
+    <div class="repo-list">
+      <div class="repo-status" x-show="loading">Discovering systems&#8230;</div>
+      <div class="repo-warning" x-show="error" x-text="'&#9888; ' + error"></div>
+      <div class="repo-status" x-show="!loading && rows.length === 0">
+        No systems configured or discovered yet.
+      </div>
+      <template x-for="(row, i) in rows" :key="row.name">
+        <div class="sys-item">
+          <input type="checkbox" :checked="!row.hidden"
+            @change="row.hidden = !$event.target.checked">
+          <span class="sys-name" :class="{{ hidden: row.hidden }}" x-text="row.name"></span>
+          <span class="sys-tag" x-show="!row.discovered" title="not currently reported by the hub">offline</span>
+          <span class="sys-spacer"></span>
+          <button type="button" class="ord-btn" @click="move(i, -1)" :disabled="i === 0">&#8593;</button>
+          <button type="button" class="ord-btn" @click="move(i, 1)" :disabled="i === rows.length - 1">&#8595;</button>
+        </div>
+      </template>
+    </div>
+    <div class="repo-footer">
+      <span class="hint" x-text="shownCount + ' shown / ' + hiddenCount + ' hidden'"></span>
+      <button type="button" class="add-btn" @click="discover()">RELOAD</button>
+    </div>
+    <textarea name="system_order"   style="display:none" x-effect="$el.value = orderPayload"></textarea>
+    <textarea name="hidden_systems" style="display:none" x-effect="$el.value = hiddenPayload"></textarea>
+  </div>
 
   <h2>NETWORK PROBE</h2>
 
@@ -430,22 +590,6 @@ function configApp() {{
     </label>
   </div>
   <p class="hint">A successful TCP connect here lights the LOCAL NETWORK indicator.</p>
-
-  <h2>NAS</h2>
-
-  <label>
-    <span class="field-label">BESZEL SYSTEM NAME</span>
-    <input type="text" name="nas_name" value="{nas_name}" placeholder="nas-01">
-    <p class="hint">System name as registered in the same Beszel instance. Leave blank to keep the panel offline.</p>
-  </label>
-
-  <h2>HOME ASSISTANT</h2>
-
-  <label>
-    <span class="field-label">BESZEL SYSTEM NAME</span>
-    <input type="text" name="ha_name" value="{ha_name}" placeholder="homeassistant">
-    <p class="hint">System name as registered in the same Beszel instance. Leave blank to keep the panel offline.</p>
-  </label>
 
   <h2>FAN CONTROLLER</h2>
 
@@ -468,8 +612,10 @@ function configApp() {{
   <button type="submit">SAVE CONFIG</button>
 </form>
 <script type="application/json" id="initial-sources">{sources_json}</script>
+<script type="application/json" id="initial-order">{system_order_json}</script>
+<script type="application/json" id="initial-hidden">{hidden_systems_json}</script>
 </body>
-</html>"##))
+</html>"##)
 }
 
 // ── Route: POST /config ───────────────────────────────────────────────
@@ -483,14 +629,12 @@ struct ConfigForm {
     beszel_url:      String,
     beszel_email:    String,
     beszel_password: String,
-    vps_name:      String,
+    /// Newline-separated Beszel system names (ordering prefix / hide list).
+    system_order:    String,
+    hidden_systems:  String,
 
     probe_host:    String,
     probe_port:    u16,
-
-    nas_name:      String,
-
-    ha_name:       String,
 
     fan_serial_port: String,
     fan_temp_warn_c: f32,
@@ -540,14 +684,12 @@ async fn save_handler(
     if !beszel_password.is_empty() {
         new_cfg.beszel_password = beszel_password.to_string();
     }
-    new_cfg.vps_name = form.vps_name.trim().to_string();
+    // Split the textareas into clean name lists: trim each line, drop blanks.
+    new_cfg.system_order   = parse_name_lines(&form.system_order);
+    new_cfg.hidden_systems = parse_name_lines(&form.hidden_systems);
 
     new_cfg.probe_host = form.probe_host.trim().to_string();
     new_cfg.probe_port = form.probe_port;
-
-    new_cfg.nas_name = form.nas_name.trim().to_string();
-
-    new_cfg.ha_name = form.ha_name.trim().to_string();
 
     new_cfg.fan_serial_port = form.fan_serial_port.trim().to_string();
     // Keep warn <= crit so the threshold branches in fan_telem.rs can't
@@ -562,4 +704,36 @@ async fn save_handler(
 
     *config.write().unwrap() = new_cfg;
     Redirect::to("/").into_response()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::config::AppConfig;
+
+    #[test]
+    fn parse_name_lines_trims_and_drops_blanks() {
+        assert_eq!(parse_name_lines("  a \n\n b\nc  \n   "), vec!["a", "b", "c"]);
+        assert!(parse_name_lines("\n  \n").is_empty());
+    }
+
+    #[test]
+    fn renders_system_manager_with_seeds() {
+        let mut cfg = AppConfig::default();
+        cfg.system_order   = vec!["spacevps".into(), "nas-01".into(), "homeassistant".into()];
+        cfg.hidden_systems = vec!["nas-01".into()];
+        let html = render_config_page(&cfg);
+
+        // Live manager is wired up, with its JSON seeds embedded.
+        assert!(html.contains("systemsManager()"));
+        assert!(html.contains(r#"id="initial-order""#));
+        assert!(html.contains(r#"id="initial-hidden""#));
+        assert!(html.contains(r#"href="/systems""#) || html.contains("fetch('/systems')"));
+        assert!(html.contains("spacevps") && html.contains("homeassistant"));
+
+        // The retired fixed-panel inputs must be gone.
+        assert!(!html.contains(r#"name="vps_name""#));
+        assert!(!html.contains(r#"name="nas_name""#));
+        assert!(!html.contains(r#"name="ha_name""#));
+    }
 }

@@ -145,11 +145,36 @@ component StoplightCard {
     }
 }
 
+// ── Square stoplight tile bound to one Beszel system ────────────────
+// Computes its own worst→level from the system's metrics, so the overview
+// can drive its remote slots straight from the dynamic `systems` model.
+component SystemStoplight {
+    in property <ServiceMetrics> metrics;
+
+    property <float> worst:
+        Math.max(Math.max(metrics.cpu-pct, metrics.temp-pct),
+                 Math.max(metrics.ram-pct, metrics.disk-pct));
+    property <int> level:
+        !metrics.reachable ? 2
+        : (worst > 0.85 ? 2 : (worst > 0.70 ? 1 : 0));
+
+    StoplightCard {
+        horizontal-stretch: 1;
+        name:     root.metrics.hostname;
+        level:    root.level;
+        headline: root.level == 0 ? "NOMINAL" : (root.level == 2 ? "CRIT" : "WARN");
+        detail:   !root.metrics.reachable ? "unreachable"
+                  : "CPU "  + root.metrics.cpu-usage
+                    + "\nRAM " + Math.round(root.metrics.ram-pct * 100) + "%"
+                    + "\nDSK " + Math.round(root.metrics.disk-pct * 100) + "%";
+    }
+}
+
 export component OverviewScreen {
     in property <SysMetrics>     metrics;
-    in property <ServiceMetrics> vps-metrics;
-    in property <ServiceMetrics> nas-metrics;
-    in property <ServiceMetrics> ha-metrics;
+    // First three entries fill the remote card slots; the rest are reachable
+    // only by swiping to their own screens.
+    in property <[ServiceMetrics]> systems;
     in property <[HudAlert]>     alerts;
     in property <int>            alert-count;
     in property <int>            alert-worst-severity;
@@ -166,30 +191,6 @@ export component OverviewScreen {
         Math.max(Math.max(metrics.cpu-pct, metrics.temp-pct),
                  Math.max(metrics.ram-pct, metrics.disk-pct));
     property <int> pi-level: pi-worst > 0.85 ? 2 : (pi-worst > 0.70 ? 1 : 0);
-
-    // ── VPS derived state ────────────────────────────────────────────
-    property <float> vps-worst:
-        Math.max(Math.max(vps-metrics.cpu-pct, vps-metrics.temp-pct),
-                 Math.max(vps-metrics.ram-pct,  vps-metrics.disk-pct));
-    property <int> vps-level:
-        !vps-metrics.reachable ? 2
-        : (vps-worst > 0.85 ? 2 : (vps-worst > 0.70 ? 1 : 0));
-
-    // ── NAS derived state ────────────────────────────────────────────
-    property <float> nas-worst:
-        Math.max(Math.max(nas-metrics.cpu-pct, nas-metrics.temp-pct),
-                 Math.max(nas-metrics.ram-pct,  nas-metrics.disk-pct));
-    property <int> nas-level:
-        !nas-metrics.reachable ? 2
-        : (nas-worst > 0.85 ? 2 : (nas-worst > 0.70 ? 1 : 0));
-
-    // ── HA derived state ─────────────────────────────────────────────
-    property <float> ha-worst:
-        Math.max(Math.max(ha-metrics.cpu-pct, ha-metrics.temp-pct),
-                 Math.max(ha-metrics.ram-pct,  ha-metrics.disk-pct));
-    property <int> ha-level:
-        !ha-metrics.reachable ? 2
-        : (ha-worst > 0.85 ? 2 : (ha-worst > 0.70 ? 1 : 0));
 
     // ── Alerts ───────────────────────────────────────────────────────
     property <int> alerts-level: alert-count == 0 ? 0 : alert-worst-severity;
@@ -259,7 +260,7 @@ export component OverviewScreen {
             padding: 10px;
             spacing: 7px;
 
-            // Row 1: LOCAL and VPS — equal width
+            // Row 1: LOCAL and system slot 0 — equal width
             HorizontalLayout {
                 spacing: 7px;
                 vertical-stretch: 1;
@@ -274,42 +275,21 @@ export component OverviewScreen {
                               + "\nRAM " + Math.round(metrics.ram-pct * 100) + "%"
                               + "\nDSK " + Math.round(metrics.disk-pct * 100) + "%";
                 }
-                StoplightCard {
-                    horizontal-stretch: 1;
-                    name:     "VPS";
-                    level:    vps-level;
-                    headline: vps-level == 0 ? "NOMINAL" : (vps-level == 2 ? "CRIT" : "WARN");
-                    detail:   !vps-metrics.reachable ? "unreachable"
-                              : "CPU "  + vps-metrics.cpu-usage
-                                + "\nRAM " + Math.round(vps-metrics.ram-pct * 100) + "%"
-                                + "\nDSK " + Math.round(vps-metrics.disk-pct * 100) + "%";
+                if root.systems.length > 0 : SystemStoplight {
+                    metrics: root.systems[0];
                 }
             }
 
-            // Row 2: NAS, HA, GITHUB — equal width (three tiles)
+            // Row 2: system slots 1 & 2 + GITHUB — equal width (up to three tiles)
             HorizontalLayout {
                 spacing: 7px;
                 vertical-stretch: 1;
 
-                StoplightCard {
-                    horizontal-stretch: 1;
-                    name:     "NAS";
-                    level:    nas-level;
-                    headline: nas-level == 0 ? "NOMINAL" : (nas-level == 2 ? "CRIT" : "WARN");
-                    detail:   !nas-metrics.reachable ? "unreachable"
-                              : "CPU "  + nas-metrics.cpu-usage
-                                + "\nRAM " + Math.round(nas-metrics.ram-pct * 100) + "%"
-                                + "\nDSK " + Math.round(nas-metrics.disk-pct * 100) + "%";
+                if root.systems.length > 1 : SystemStoplight {
+                    metrics: root.systems[1];
                 }
-                StoplightCard {
-                    horizontal-stretch: 1;
-                    name:     "HA";
-                    level:    ha-level;
-                    headline: ha-level == 0 ? "NOMINAL" : (ha-level == 2 ? "CRIT" : "WARN");
-                    detail:   !ha-metrics.reachable ? "unreachable"
-                              : "CPU "  + ha-metrics.cpu-usage
-                                + "\nRAM " + Math.round(ha-metrics.ram-pct * 100) + "%"
-                                + "\nDSK " + Math.round(ha-metrics.disk-pct * 100) + "%";
+                if root.systems.length > 2 : SystemStoplight {
+                    metrics: root.systems[2];
                 }
                 StoplightCard {
                     horizontal-stretch: 1;
