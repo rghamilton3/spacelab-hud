@@ -4,11 +4,9 @@ use std::time::Duration;
 
 use serde::Deserialize;
 
+use crate::config::ConfigRef;
 use crate::shared_state::{AlertData, SharedAlertsRef};
 
-const SERIAL_PORT:    &str     = "/dev/ttyACM0";
-const TEMP_WARN_C:    f32      = 35.0;
-const TEMP_CRIT_C:    f32      = 40.0;
 const RECONNECT_WAIT: Duration = Duration::from_secs(5);
 
 #[derive(Deserialize)]
@@ -43,7 +41,7 @@ fn parse_line(line: &str) -> Option<Frame> {
     serde_json::from_str(json).ok()
 }
 
-fn alerts_for(frame: &Frame) -> Vec<AlertData> {
+fn alerts_for(frame: &Frame, temp_warn_c: f32, temp_crit_c: f32) -> Vec<AlertData> {
     let mut out = Vec::new();
     if !frame.temp_ok {
         out.push(AlertData {
@@ -52,19 +50,19 @@ fn alerts_for(frame: &Frame) -> Vec<AlertData> {
             age:      "now".into(),
             summary:  "Fan controller: temperature sensor read failed — value stale".into(),
         });
-    } else if frame.temp_c >= TEMP_CRIT_C {
+    } else if frame.temp_c >= temp_crit_c {
         out.push(AlertData {
             name:     "RACK TEMP".into(),
             severity: "critical".into(),
             age:      "now".into(),
-            summary:  format!("Rack temperature {:.1}°C — exceeds {:.0}°C critical threshold", frame.temp_c, TEMP_CRIT_C),
+            summary:  format!("Rack temperature {:.1}°C — exceeds {:.0}°C critical threshold", frame.temp_c, temp_crit_c),
         });
-    } else if frame.temp_c >= TEMP_WARN_C {
+    } else if frame.temp_c >= temp_warn_c {
         out.push(AlertData {
             name:     "RACK TEMP".into(),
             severity: "warning".into(),
             age:      "now".into(),
-            summary:  format!("Rack temperature {:.1}°C — exceeds {:.0}°C warning threshold", frame.temp_c, TEMP_WARN_C),
+            summary:  format!("Rack temperature {:.1}°C — exceeds {:.0}°C warning threshold", frame.temp_c, temp_warn_c),
         });
     }
     if !frame.rpm_ok {
@@ -78,11 +76,21 @@ fn alerts_for(frame: &Frame) -> Vec<AlertData> {
     out
 }
 
-pub fn spawn(shared: SharedAlertsRef, ui_weak: slint::Weak<crate::AppWindow>) {
+pub fn spawn(
+    shared:     SharedAlertsRef,
+    ui_weak:    slint::Weak<crate::AppWindow>,
+    config_ref: ConfigRef,
+) {
     std::thread::spawn(move || loop {
-        let file = match File::open(SERIAL_PORT) {
+        // Re-read config each reconnect cycle so edits via the web UI apply live.
+        let (serial_port, temp_warn_c, temp_crit_c) = {
+            let cfg = config_ref.read().unwrap();
+            (cfg.fan_serial_port.clone(), cfg.fan_temp_warn_c, cfg.fan_temp_crit_c)
+        };
+
+        let file = match File::open(&serial_port) {
             Ok(f) => {
-                eprintln!("fan_telem: connected to {SERIAL_PORT}");
+                eprintln!("fan_telem: connected to {serial_port}");
                 {
                     let mut g = shared.lock().unwrap();
                     g.fan = vec![];
@@ -91,7 +99,7 @@ pub fn spawn(shared: SharedAlertsRef, ui_weak: slint::Weak<crate::AppWindow>) {
                 f
             }
             Err(e) => {
-                eprintln!("fan_telem: cannot open {SERIAL_PORT}: {e}");
+                eprintln!("fan_telem: cannot open {serial_port}: {e}");
                 {
                     let mut g = shared.lock().unwrap();
                     g.fan = vec![AlertData {
@@ -115,7 +123,7 @@ pub fn spawn(shared: SharedAlertsRef, ui_weak: slint::Weak<crate::AppWindow>) {
             let Some(frame) = parse_line(&line) else { continue };
             {
                 let mut g = shared.lock().unwrap();
-                g.fan = alerts_for(&frame);
+                g.fan = alerts_for(&frame, temp_warn_c, temp_crit_c);
             }
             crate::shared_state::push_alerts_to_ui(&ui_weak, &shared, true);
         }

@@ -3,15 +3,36 @@ use std::time::Duration;
 
 use serde::Deserialize;
 
-const BESZEL_HOST:     &str     = "http://spacevps.tail718406.ts.net:8090";
-const TIMEOUT:         Duration = Duration::from_secs(5);
-const VPS_SYSTEM_NAME: &str     = "spacevps";
-const VPS_HOSTNAME:    &str     = "spacevps";
-const VPS_IP_ADDR:     &str     = "spacevps.tail718406.ts.net";
+const TIMEOUT: Duration = Duration::from_secs(5);
 
 static AUTH_TOKEN: Mutex<Option<String>> = Mutex::new(None);
 
 // ── Public types ──────────────────────────────────────────────────────
+
+/// Runtime-configurable VPS / Beszel connection settings, snapshotted from
+/// [`crate::config::AppConfig`] each polling cycle.
+#[derive(Clone)]
+pub struct VpsSettings {
+    /// Base URL of the Beszel instance, e.g. `http://host:8090`.
+    pub beszel_url:  String,
+    /// System name as registered in Beszel.
+    pub system_name: String,
+    /// Hostname shown on the VPS panel.
+    pub hostname:    String,
+    /// IP / address shown on the VPS panel.
+    pub ip:          String,
+}
+
+impl VpsSettings {
+    pub fn from_config(cfg: &crate::config::AppConfig) -> Self {
+        Self {
+            beszel_url:  cfg.beszel_url.clone(),
+            system_name: cfg.vps_name.clone(),
+            hostname:    cfg.vps_hostname.clone(),
+            ip:          cfg.vps_ip.clone(),
+        }
+    }
+}
 
 pub struct RemoteAlert {
     pub name:     String,
@@ -66,7 +87,7 @@ fn invalidate_token() {
     }
 }
 
-fn get_or_refresh_token() -> Option<String> {
+fn get_or_refresh_token(beszel_url: &str) -> Option<String> {
     {
         let guard = AUTH_TOKEN.lock().ok()?;
         if let Some(t) = guard.as_ref() {
@@ -82,7 +103,7 @@ fn get_or_refresh_token() -> Option<String> {
 
     let resp = ureq::post(&format!(
         "{}/api/collections/_superusers/auth-with-password",
-        BESZEL_HOST
+        beszel_url
     ))
     .timeout(TIMEOUT)
     .send_json(serde_json::json!({ "identity": email, "password": password }))
@@ -97,9 +118,9 @@ fn get_or_refresh_token() -> Option<String> {
 
 // ── Beszel API ────────────────────────────────────────────────────────
 
-fn beszel_alive() -> bool {
+fn beszel_alive(beszel_url: &str) -> bool {
     matches!(
-        ureq::get(&format!("{}/api/health", BESZEL_HOST))
+        ureq::get(&format!("{}/api/health", beszel_url))
             .timeout(TIMEOUT)
             .call(),
         Ok(r) if r.status() == 200
@@ -118,8 +139,8 @@ struct BeszelMetrics {
     disk_pct:      f64,
 }
 
-fn fetch_beszel_metrics() -> Option<BeszelMetrics> {
-    let token = get_or_refresh_token()?;
+fn fetch_beszel_metrics(beszel_url: &str, system_name: &str) -> Option<BeszelMetrics> {
+    let token = get_or_refresh_token(beszel_url)?;
 
     // ── Step 1: resolve system ID and uptime ──────────────────────────
     #[derive(Deserialize)]
@@ -137,7 +158,7 @@ fn fetch_beszel_metrics() -> Option<BeszelMetrics> {
 
     let resp = ureq::get(&format!(
         "{}/api/collections/systems/records?filter=name%3D%22{}%22&perPage=1",
-        BESZEL_HOST, VPS_SYSTEM_NAME
+        beszel_url, system_name
     ))
     .set("Authorization", &token)
     .timeout(TIMEOUT)
@@ -174,7 +195,7 @@ fn fetch_beszel_metrics() -> Option<BeszelMetrics> {
 
     let resp2 = ureq::get(&format!(
         "{}/api/collections/system_stats/records?sort=-created&perPage=1&filter=system%3D%22{}%22%26%26type%3D%221m%22",
-        BESZEL_HOST, system_id
+        beszel_url, system_id
     ))
     .set("Authorization", &token)
     .timeout(TIMEOUT)
@@ -204,14 +225,14 @@ fn fetch_beszel_metrics() -> Option<BeszelMetrics> {
 
 // ── VPS fetch ─────────────────────────────────────────────────────────
 
-pub fn fetch_vps() -> crate::ServiceMetrics {
-    if !beszel_alive() {
-        return offline_metrics(VPS_HOSTNAME, VPS_IP_ADDR);
+pub fn fetch_vps(settings: &VpsSettings) -> crate::ServiceMetrics {
+    if !beszel_alive(&settings.beszel_url) {
+        return offline_metrics(&settings.hostname, &settings.ip);
     }
 
-    let m = match fetch_beszel_metrics() {
+    let m = match fetch_beszel_metrics(&settings.beszel_url, &settings.system_name) {
         Some(m) => m,
-        None    => return online_no_metrics(VPS_HOSTNAME, VPS_IP_ADDR),
+        None    => return online_no_metrics(&settings.hostname, &settings.ip),
     };
 
     let load1  = m.load.first()  .copied().unwrap_or(0.0);
@@ -219,8 +240,8 @@ pub fn fetch_vps() -> crate::ServiceMetrics {
     let load15 = m.load.get(2)   .copied().unwrap_or(0.0);
 
     crate::ServiceMetrics {
-        hostname:  VPS_HOSTNAME.into(),
-        ip_addr:   VPS_IP_ADDR.into(),
+        hostname:  settings.hostname.as_str().into(),
+        ip_addr:   settings.ip.as_str().into(),
         reachable: true,
         uptime:    fmt_uptime(m.uptime_secs).into(),
         load_avg:  format!("{:.2}  {:.2}  {:.2}", load1, load5, load15).into(),
