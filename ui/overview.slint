@@ -154,7 +154,6 @@ export component OverviewScreen {
     in property <int>            alert-count;
     in property <int>            alert-worst-severity;
     in property <string>         clock-str;
-    in property <string>         overall-status;
     in property <color>          overall-color;
     in property <int>            github-level;
     in property <int>            github-pr-count;
@@ -222,16 +221,9 @@ export component OverviewScreen {
                     HorizontalLayout {
                         spacing: 0px;
                         Text {
-                            text: "SPACELAB-1 // OVERVIEW // ";
-                            color: Theme.accent;
-                            font-size: 26px;
-                            letter-spacing: 3px;
-                            vertical-alignment: center;
-                        }
-                        Text {
-                            text: overall-status;
+                            text: "SPACELAB-1 // OVERVIEW";
                             color: overall-color;
-                            font-size: 26px;
+                            font-size: 22px;
                             letter-spacing: 3px;
                             vertical-alignment: center;
                             animate color { duration: 500ms; }

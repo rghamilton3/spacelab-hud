@@ -110,8 +110,6 @@ export component SystemInfoScreen {
     property <int> level: pi-worst > 0.85 ? 2 : (pi-worst > 0.70 ? 1 : 0);
     property <color> status-color:
         level == 2 ? Theme.danger : (level == 1 ? Theme.warn : Theme.accent);
-    property <string> status-text:
-        level == 0 ? "NOMINAL" : (level == 2 ? "CRIT" : "WARN");
 
     VerticalLayout {
         padding: 0px;
@@ -140,16 +138,9 @@ export component SystemInfoScreen {
                     HorizontalLayout {
                         spacing: 0px;
                         Text {
-                            text: "SPACELAB-1 // HUD // ";
-                            color: Theme.accent;
-                            font-size: 26px;
-                            letter-spacing: 3px;
-                            vertical-alignment: center;
-                        }
-                        Text {
-                            text: status-text;
+                            text: "SPACELAB-1 // HUD";
                             color: status-color;
-                            font-size: 26px;
+                            font-size: 22px;
                             letter-spacing: 3px;
                             vertical-alignment: center;
                             animate color { duration: 500ms; }

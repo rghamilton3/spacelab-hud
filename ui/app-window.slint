@@ -74,9 +74,6 @@ export component AppWindow inherits Window {
     property <color> overall-color:
         overall-level == 2 ? Theme.danger
         : (overall-level == 1 ? Theme.warn : Theme.accent);
-    property <string> overall-status:
-        overall-level == 0 ? "NOMINAL"
-        : (overall-level == 2 ? "CRIT" : "WARN");
 
     // ── Swipe state ───────────────────────────────────────────────────
     // 7 pages: 0 Overview, 1 GitHub, 2 VPS, 3 NAS, 4 HA, 5 HUD, 6 Alerts
@@ -104,7 +101,6 @@ export component AppWindow inherits Window {
             alert-count:          root.alert-count;
             alert-worst-severity: root.alert-worst-severity;
             clock-str:            root.clock-str;
-            overall-status:       root.overall-status;
             overall-color:        root.overall-color;
             github-level:         root.github-level;
             github-pr-count:      root.github-pr-count;
