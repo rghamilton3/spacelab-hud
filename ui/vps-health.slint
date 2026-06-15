@@ -87,19 +87,19 @@ export component VpsHealthScreen {
 
         Rectangle { height: 1px; background: Theme.border; }
 
-        // ── 4×2 metric grid (matches HUD) ────────────────────────────
-        GridLayout {
+        // ── stacked metric rows (matches HUD) ───────────────────────
+        VerticalLayout {
             padding: 10px;
             spacing: 7px;
 
-            Row {
-                MetricCard { label: "SYSTEM"; value: root.metrics.hostname; }
-            }
-            Row {
+            MetricCard { label: "SYSTEM"; value: root.metrics.hostname; }
+            HorizontalLayout {
+                spacing: 7px;
                 MetricCard { label: "UPTIME";   value: root.metrics.uptime; }
                 MetricCard { label: "LOAD AVG"; value: root.metrics.load-avg; }
             }
-            Row {
+            HorizontalLayout {
+                spacing: 7px;
                 MetricBarCard {
                     label:     "CPU USAGE";
                     value:     root.metrics.cpu-usage;
@@ -115,7 +115,8 @@ export component VpsHealthScreen {
                     danger-at: 0.88;
                 }
             }
-            Row {
+            HorizontalLayout {
+                spacing: 7px;
                 MetricBarCard {
                     label:     "MEMORY";
                     value:     root.metrics.ram;

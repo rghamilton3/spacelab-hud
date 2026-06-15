@@ -9,7 +9,7 @@ const TIMEOUT: Duration = Duration::from_secs(5);
 /// URL means that when an operator points the config at a different Beszel
 /// instance, the stale token is discarded up front rather than tried, 401'd,
 /// and refreshed — which would otherwise blank all three panels for one cycle.
-static AUTH_TOKEN: Mutex<Option<(String, String)>> = Mutex::new(None);
+static AUTH_TOKEN: Mutex<Option<(String, String, String)>> = Mutex::new(None);
 
 // ── Public types ──────────────────────────────────────────────────────
 
@@ -115,8 +115,11 @@ fn invalidate_token() {
 fn get_or_refresh_token(beszel_url: &str, email: &str, password: &str) -> Option<String> {
     {
         let guard = AUTH_TOKEN.lock().ok()?;
-        if let Some((url, token)) = guard.as_ref() {
-            if url == beszel_url {
+        if let Some((url, cached_email, token)) = guard.as_ref() {
+            // Key on (url, email) so reconfiguring to different credentials on
+            // the same hub — e.g. swapping a superuser login for a read-only
+            // user — forces a fresh auth instead of reusing the stale token.
+            if url == beszel_url && cached_email == email {
                 return Some(token.clone());
             }
         }
@@ -143,7 +146,7 @@ fn get_or_refresh_token(beszel_url: &str, email: &str, password: &str) -> Option
     let body: AuthResp = resp.into_json().ok()?;
 
     let mut guard = AUTH_TOKEN.lock().ok()?;
-    *guard = Some((beszel_url.to_string(), body.token.clone()));
+    *guard = Some((beszel_url.to_string(), email.to_string(), body.token.clone()));
     Some(body.token)
 }
 
