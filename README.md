@@ -28,18 +28,18 @@ Everything is configured at runtime through the web config UI — no rebuild and
 | Section | Fields |
 | --- | --- |
 | **GitHub** | One source per org/account: a PAT (fine-grained recommended — the page lists the exact read-only permissions), an optional username (distinguishes your activity in the feed), and the repos to watch (picked from a live list or added manually as `owner/repo`). Plus a global poll interval (seconds, min 30). |
-| **VPS / Beszel** | Base URL of your [Beszel](https://beszel.dev/) instance, the PocketBase superuser email + password used to obtain an API token (not your OAuth/SSO login — OAuth applies to the `users` collection only), and the VPS system name. The system name doubles as the panel's identity, so there's no separate hostname/IP to enter. |
+| **VPS / Beszel** | Base URL of your [Beszel](https://beszel.dev/) instance, a Beszel user email + password used to obtain an API token (a **read-only** user with the monitored systems shared to it is sufficient — no superuser), and the VPS system name. The system name doubles as the panel's identity, so there's no separate hostname/IP to enter. |
 | **Network probe** | Host and TCP port that the local-network reachability indicator connects to. |
 | **NAS** and **Home Assistant** | The Beszel system name for each (they share the one Beszel instance above). Leave a system name blank to keep that panel offline. |
 | **Fan controller** | USB serial port and the rack-temperature warn / critical thresholds (°C). |
 
-All monitored systems (VPS, NAS, Home Assistant) read from the **same** Beszel instance, differing only by system name — so the Beszel URL and admin credentials are entered once.
+All monitored systems (VPS, NAS, Home Assistant) read from the **same** Beszel instance, differing only by system name — so the Beszel URL and user credentials are entered once.
 
 Settings are persisted to `~/.config/spacelab-hud/config.json` (mode `0600`). The web config port itself is **not** editable from the UI — change `web_config_port` in that JSON file (then restart) if port 80 is unavailable.
 
 ### Secret storage
 
-The secret fields — the Beszel admin password and the GitHub PATs — are **encrypted at rest** (ChaCha20-Poly1305) before being written to `config.json`. The symmetric key is generated on first run and kept in a separate `0600` file at `~/.local/state/spacelab-hud/secret.key`, so a leaked config backup or stray commit doesn't also expose the key. Everything else in the config is stored as readable JSON.
+The secret fields — the Beszel user password and the GitHub PATs — are **encrypted at rest** (ChaCha20-Poly1305) before being written to `config.json`. The symmetric key is generated on first run and kept in a separate `0600` file at `~/.local/state/spacelab-hud/secret.key`, so a leaked config backup or stray commit doesn't also expose the key. Everything else in the config is stored as readable JSON.
 
 This is proportionate protection for an unattended LAN device: because the HUD auto-boots and must decrypt with no human present, the key necessarily lives on the same machine — so this defends against *casual* exposure (backups, screen-shares, accidental commits), not against an attacker who already has read access to the Pi's filesystem. (The key layer is isolated in `src/secrets.rs` so it can later be upgraded to a TPM-sealed key.) If `secret.key` is lost, re-enter the secrets in the web config UI.
 

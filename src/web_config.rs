@@ -401,13 +401,13 @@ function configApp() {{
 
   <div class="field-row">
     <label>
-      <span class="field-label">BESZEL ADMIN EMAIL</span>
-      <input type="text" name="beszel_email" value="{beszel_email}" placeholder="admin@example.com" autocomplete="off">
+      <span class="field-label">BESZEL EMAIL</span>
+      <input type="text" name="beszel_email" value="{beszel_email}" placeholder="readonly@example.com" autocomplete="off">
     </label>
     <label>
-      <span class="field-label">BESZEL ADMIN PASSWORD</span>
+      <span class="field-label">BESZEL PASSWORD</span>
       <input type="password" name="beszel_password" value="" placeholder="{beszel_pw_set}" autocomplete="off">
-      <p class="hint">PocketBase <b>superuser</b> credentials (set via the <code>superuser</code> CLI) used to obtain an API token — <b>not</b> your OAuth/SSO web login. OAuth applies to the <code>users</code> collection only and doesn't affect this. Leave password blank to keep the stored one.</p>
+      <p class="hint">A regular Beszel <code>users</code>-collection login used to obtain an API token — a <b>read-only</b> user with the monitored systems shared to it is enough (no superuser). Requires password login to be enabled for this user. Leave password blank to keep the stored one.</p>
     </label>
   </div>
 

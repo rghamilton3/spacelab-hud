@@ -50,11 +50,13 @@ pub struct AppConfig {
     // ── VPS (Beszel monitoring) ───────────────────────────────────────
     /// Base URL of the Beszel instance, e.g. `http://host:8090`.
     pub beszel_url:    String,
-    /// Beszel superuser email used to obtain an API auth token. Shared by all
-    /// monitored systems (they live in one Beszel instance).
+    /// Beszel user email used to obtain an API auth token. A read-only user
+    /// (with the monitored systems shared to it) is sufficient — no superuser
+    /// needed. Shared by all monitored systems (they live in one Beszel
+    /// instance).
     pub beszel_email:    String,
-    /// Beszel superuser password. Stored alongside the other LAN-trusted
-    /// secrets in `config.json` (same model as the GitHub PATs).
+    /// Beszel user password. Stored alongside the other LAN-trusted secrets in
+    /// `config.json` (same model as the GitHub PATs).
     pub beszel_password: String,
     /// System name as registered in Beszel (used to look up the record, and
     /// shown as the panel's identity — Beszel already knows the host).

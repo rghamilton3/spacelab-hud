@@ -21,9 +21,10 @@ static AUTH_TOKEN: Mutex<Option<(String, String)>> = Mutex::new(None);
 pub struct BeszelTarget {
     /// Base URL of the Beszel instance, e.g. `http://host:8090`.
     pub beszel_url:  String,
-    /// Beszel superuser email used to obtain an API auth token.
+    /// Beszel user email used to obtain an API auth token. A read-only user
+    /// with the monitored systems shared to it is sufficient.
     pub email:       String,
-    /// Beszel superuser password.
+    /// Beszel user password.
     pub password:    String,
     /// System name as registered in Beszel. Also shown on the panel as its
     /// identity — Beszel already knows the host, so there's no separately
@@ -128,8 +129,11 @@ fn get_or_refresh_token(beszel_url: &str, email: &str, password: &str) -> Option
     #[derive(Deserialize)]
     struct AuthResp { token: String }
 
+    // Authenticate as a regular Beszel user (the `users` collection), not a
+    // superuser — read-only status polling only needs a user the systems have
+    // been shared with, so there's no reason to hand the HUD admin rights.
     let resp = ureq::post(&format!(
-        "{}/api/collections/_superusers/auth-with-password",
+        "{}/api/collections/users/auth-with-password",
         beszel_url
     ))
     .timeout(TIMEOUT)
