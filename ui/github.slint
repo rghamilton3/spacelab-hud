@@ -208,16 +208,9 @@ export component GithubScreen {
                     HorizontalLayout {
                         spacing: 0px;
                         Text {
-                            text: "SPACELAB-1 // GITHUB // ";
-                            color: Theme.accent;
-                            font-size: 26px;
-                            letter-spacing: 3px;
-                            vertical-alignment: center;
-                        }
-                        Text {
-                            text: !root.configured ? "SETUP" : root.github-status;
+                            text: "SPACELAB-1 // GITHUB";
                             color: !root.configured ? Theme.text-label : status-color;
-                            font-size: 26px;
+                            font-size: 22px;
                             letter-spacing: 3px;
                             vertical-alignment: center;
                             animate color { duration: 500ms; }

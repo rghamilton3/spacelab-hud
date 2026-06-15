@@ -68,10 +68,6 @@ export component AlertsScreen {
         : (alert-count == 0 ? 0 : alert-worst-severity);
     property <color> status-color:
         level == 2 ? Theme.danger : (level == 1 ? Theme.warn : Theme.accent);
-    property <string> status-text:
-        !alerts-reachable ? "OFFLINE"
-        : (alert-count == 0 ? "NOMINAL"
-           : (level == 2 ? "CRIT" : (level == 1 ? "WARN" : "ACTIVE")));
 
     VerticalLayout {
         padding: 0px;
@@ -100,16 +96,9 @@ export component AlertsScreen {
                     HorizontalLayout {
                         spacing: 0px;
                         Text {
-                            text: "SPACELAB-1 // ALERTS // ";
-                            color: Theme.accent;
-                            font-size: 26px;
-                            letter-spacing: 3px;
-                            vertical-alignment: center;
-                        }
-                        Text {
-                            text: status-text;
+                            text: "SPACELAB-1 // ALERTS";
                             color: status-color;
-                            font-size: 26px;
+                            font-size: 22px;
                             letter-spacing: 3px;
                             vertical-alignment: center;
                             animate color { duration: 500ms; }
