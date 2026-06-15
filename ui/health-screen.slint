@@ -1,8 +1,12 @@
 import { Theme, ServiceMetrics } from "theme.slint";
 import { MetricCard, MetricBarCard } from "system-info.slint";
 
-export component NasHealthScreen {
+// Generic health panel for one Beszel system. The carousel instantiates one of
+// these per system the hub reports (see app-window.slint's repeater); `title`
+// is the system's Beszel name, shown in the header.
+export component HealthScreen {
     in property <ServiceMetrics> metrics;
+    in property <string>         title;
     in property <bool>           show-back:    false;
     in property <bool>           show-forward: false;
 
@@ -19,6 +23,7 @@ export component NasHealthScreen {
         padding: 0px;
         spacing: 0px;
 
+        // ── Header ──────────────────────────────────────────────────
         Rectangle {
             height: 84px;
             background: Theme.surface;
@@ -41,7 +46,7 @@ export component NasHealthScreen {
                     HorizontalLayout {
                         spacing: 0px;
                         Text {
-                            text: "SPACELAB-1 // NAS";
+                            text: "SPACELAB-1 // " + root.title;
                             color: status-color;
                             font-size: 22px;
                             letter-spacing: 3px;
@@ -86,6 +91,7 @@ export component NasHealthScreen {
 
         Rectangle { height: 1px; background: Theme.border; }
 
+        // ── stacked metric rows (matches HUD) ───────────────────────
         VerticalLayout {
             padding: 10px;
             spacing: 7px;
@@ -123,7 +129,7 @@ export component NasHealthScreen {
                     danger-at: 0.90;
                 }
                 MetricBarCard {
-                    label:     "STORAGE";
+                    label:     "DISK /";
                     value:     root.metrics.disk;
                     pct:       root.metrics.disk-pct;
                     warn-at:   0.80;

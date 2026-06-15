@@ -58,23 +58,32 @@ pub struct AppConfig {
     /// Beszel user password. Stored alongside the other LAN-trusted secrets in
     /// `config.json` (same model as the GitHub PATs).
     pub beszel_password: String,
-    /// System name as registered in Beszel (used to look up the record, and
-    /// shown as the panel's identity — Beszel already knows the host).
-    pub vps_name:      String,
+    /// Screen ordering prefix: systems whose Beszel name appears here are shown
+    /// first, in this order. Any hub system not listed follows in hub order, so
+    /// newly-added systems appear automatically without config changes.
+    #[serde(default)]
+    pub system_order:   Vec<String>,
+    /// Systems to hide entirely, by Beszel name. A hidden system gets no screen
+    /// and is skipped before its stats are fetched.
+    #[serde(default)]
+    pub hidden_systems: Vec<String>,
+
+    // ── Legacy fixed-panel system names ───────────────────────────────
+    // Pre-dynamic configs pinned exactly three systems (VPS/NAS/HA) by name.
+    // On load they fold into `system_order` (see [`AppConfig::migrate`]),
+    // preserving the old screen order, then drop on the next save.
+    #[serde(default, rename = "vps_name", skip_serializing)]
+    legacy_vps_name: String,
+    #[serde(default, rename = "nas_name", skip_serializing)]
+    legacy_nas_name: String,
+    #[serde(default, rename = "ha_name", skip_serializing)]
+    legacy_ha_name:  String,
 
     // ── Network reachability probe ────────────────────────────────────
     /// Host the local-network probe connects to.
     pub probe_host:    String,
     /// TCP port the local-network probe connects to.
     pub probe_port:    u16,
-
-    // ── NAS panel ─────────────────────────────────────────────────────
-    /// System name as registered in Beszel (used to look up the record).
-    pub nas_name:      String,
-
-    // ── Home Assistant panel ──────────────────────────────────────────
-    /// System name as registered in Beszel (used to look up the record).
-    pub ha_name:       String,
 
     // ── Fan controller (USB serial telemetry) ─────────────────────────
     pub fan_serial_port: String,
@@ -102,14 +111,15 @@ impl Default for AppConfig {
             beszel_url:      String::new(),
             beszel_email:    String::new(),
             beszel_password: String::new(),
-            vps_name:      String::new(),
+            system_order:    vec![],
+            hidden_systems:  vec![],
+
+            legacy_vps_name: String::new(),
+            legacy_nas_name: String::new(),
+            legacy_ha_name:  String::new(),
 
             probe_host:    String::new(),
             probe_port:    22,
-
-            nas_name:      String::new(),
-
-            ha_name:       String::new(),
 
             fan_serial_port: "/dev/ttyACM0".to_string(),
             fan_temp_warn_c: 35.0,
@@ -172,6 +182,20 @@ impl AppConfig {
                 username: std::mem::take(&mut self.legacy_github_username),
                 repos:    std::mem::take(&mut self.legacy_github_repos),
             });
+        }
+
+        // Fold the legacy fixed panel names into the ordering prefix, preserving
+        // the old VPS→NAS→HA screen order. A no-op once `system_order` is set or
+        // no legacy names are present, so it's safe on every load.
+        if self.system_order.is_empty() {
+            self.system_order = [
+                std::mem::take(&mut self.legacy_vps_name),
+                std::mem::take(&mut self.legacy_nas_name),
+                std::mem::take(&mut self.legacy_ha_name),
+            ]
+            .into_iter()
+            .filter(|n| !n.is_empty())
+            .collect();
         }
     }
 
@@ -310,6 +334,31 @@ mod tests {
         let cfg = load_str(r#"{ "github_repos": ["alice/a"] }"#);
         assert!(cfg.github_sources.is_empty());
         assert!(!cfg.is_configured());
+    }
+
+    #[test]
+    fn legacy_panel_names_seed_system_order() {
+        // Pre-dynamic config: the three fixed names fold into the ordering
+        // prefix, in VPS→NAS→HA order, with blanks dropped.
+        let cfg = load_str(r#"{ "vps_name": "spacevps", "ha_name": "homeassistant" }"#);
+        assert_eq!(cfg.system_order, vec!["spacevps", "homeassistant"]);
+    }
+
+    #[test]
+    fn explicit_system_order_skips_legacy_migration() {
+        let cfg = load_str(
+            r#"{ "system_order": ["a", "b"], "vps_name": "spacevps" }"#,
+        );
+        assert_eq!(cfg.system_order, vec!["a", "b"]);
+    }
+
+    #[test]
+    fn saved_config_drops_legacy_panel_names() {
+        let cfg = load_str(r#"{ "vps_name": "spacevps", "nas_name": "nas-01" }"#);
+        let json = serde_json::to_string(&cfg).unwrap();
+        assert!(!json.contains("vps_name"));
+        assert!(!json.contains("nas_name"));
+        assert!(json.contains("system_order"));
     }
 
     /// Full boundary round-trip: secrets must land on disk as ciphertext yet

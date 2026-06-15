@@ -2,9 +2,7 @@ import { Theme, SysMetrics, ServiceMetrics, HudAlert, GithubRepo, GithubEvent } 
 import { OverviewScreen }   from "overview.slint";
 import { GithubScreen }     from "github.slint";
 import { SystemInfoScreen } from "system-info.slint";
-import { VpsHealthScreen }  from "vps-health.slint";
-import { NasHealthScreen }  from "nas-health.slint";
-import { HaHealthScreen }   from "ha-health.slint";
+import { HealthScreen }     from "health-screen.slint";
 import { AlertsScreen }     from "alerts.slint";
 
 export component AppWindow inherits Window {
@@ -19,9 +17,11 @@ export component AppWindow inherits Window {
     in property     <string>         clock-str;
     in property     <bool>           local-network-reachable;
 
-    in property     <ServiceMetrics> vps-metrics;
-    in property     <ServiceMetrics> nas-metrics;
-    in property     <ServiceMetrics> ha-metrics;
+    // One entry per Beszel system the hub reports, ordered/filtered per config.
+    in property     <[ServiceMetrics]> systems;
+    // Worst stoplight level across all systems, computed Rust-side (Slint can't
+    // fold a model to a max).
+    in property     <int>            systems-worst-level;
 
     in property     <[HudAlert]>     alerts;
     in property     <int>            alert-count;
@@ -43,41 +43,21 @@ export component AppWindow inherits Window {
                  Math.max(metrics.ram-pct, metrics.disk-pct));
     property <int> pi-level: pi-worst > 0.85 ? 2 : (pi-worst > 0.70 ? 1 : 0);
 
-    property <float> vps-worst:
-        Math.max(Math.max(vps-metrics.cpu-pct, vps-metrics.temp-pct),
-                 Math.max(vps-metrics.ram-pct,  vps-metrics.disk-pct));
-    property <int> vps-level:
-        !vps-metrics.reachable ? 2
-        : (vps-worst > 0.85 ? 2 : (vps-worst > 0.70 ? 1 : 0));
-
-    property <float> nas-worst:
-        Math.max(Math.max(nas-metrics.cpu-pct, nas-metrics.temp-pct),
-                 Math.max(nas-metrics.ram-pct,  nas-metrics.disk-pct));
-    property <int> nas-level:
-        !nas-metrics.reachable ? 2
-        : (nas-worst > 0.85 ? 2 : (nas-worst > 0.70 ? 1 : 0));
-
-    property <float> ha-worst:
-        Math.max(Math.max(ha-metrics.cpu-pct, ha-metrics.temp-pct),
-                 Math.max(ha-metrics.ram-pct,  ha-metrics.disk-pct));
-    property <int> ha-level:
-        !ha-metrics.reachable ? 2
-        : (ha-worst > 0.85 ? 2 : (ha-worst > 0.70 ? 1 : 0));
-
     property <int> alerts-rollup-level:
         alert-count == 0 ? 0 : alert-worst-severity;
 
     property <int> overall-level:
-        Math.max(Math.max(Math.max(pi-level, vps-level),
-                          Math.max(nas-level, ha-level)),
+        Math.max(Math.max(pi-level, systems-worst-level),
                  Math.max(alerts-rollup-level, github-level));
     property <color> overall-color:
         overall-level == 2 ? Theme.danger
         : (overall-level == 1 ? Theme.warn : Theme.accent);
 
     // ── Swipe state ───────────────────────────────────────────────────
-    // 7 pages: 0 Overview, 1 GitHub, 2 VPS, 3 NAS, 4 HA, 5 HUD, 6 Alerts
-    property        <int>    page-count:     7;
+    // Fixed pages bracket a dynamic middle block, one screen per Beszel system:
+    //   0 Overview · 1 GitHub · [2 .. 2+N) systems · (2+N) HUD · (3+N) Alerts
+    // where N = systems.length.
+    property        <int>    page-count:     4 + root.systems.length;
     in-out property <int>    current-page:   0;
     property        <int>    committed-page: 0;
     property        <length> drag-offset:    0px;
@@ -94,9 +74,7 @@ export component AppWindow inherits Window {
             width: root.width;
             height: parent.height;
             metrics:              root.metrics;
-            vps-metrics:          root.vps-metrics;
-            nas-metrics:          root.nas-metrics;
-            ha-metrics:           root.ha-metrics;
+            systems:              root.systems;
             alerts:               root.alerts;
             alert-count:          root.alert-count;
             alert-worst-severity: root.alert-worst-severity;
@@ -125,35 +103,19 @@ export component AppWindow inherits Window {
             show-forward:       true;
         }
 
-        VpsHealthScreen {
-            x: 2 * root.width;
+        // Dynamic middle block: one HealthScreen per Beszel system.
+        for system[idx] in root.systems : HealthScreen {
+            x: (2 + idx) * root.width;
             width: root.width;
             height: parent.height;
-            metrics:      root.vps-metrics;
-            show-back:    true;
-            show-forward: true;
-        }
-
-        NasHealthScreen {
-            x: 3 * root.width;
-            width: root.width;
-            height: parent.height;
-            metrics:      root.nas-metrics;
-            show-back:    true;
-            show-forward: true;
-        }
-
-        HaHealthScreen {
-            x: 4 * root.width;
-            width: root.width;
-            height: parent.height;
-            metrics:      root.ha-metrics;
+            metrics:      system;
+            title:        system.hostname;
             show-back:    true;
             show-forward: true;
         }
 
         SystemInfoScreen {
-            x: 5 * root.width;
+            x: (2 + root.systems.length) * root.width;
             width: root.width;
             height: parent.height;
             metrics:           root.metrics;
@@ -163,7 +125,7 @@ export component AppWindow inherits Window {
         }
 
         AlertsScreen {
-            x: 6 * root.width;
+            x: (3 + root.systems.length) * root.width;
             width: root.width;
             height: parent.height;
             alerts:               root.alerts;
@@ -216,21 +178,36 @@ export component AppWindow inherits Window {
                         let rowh   = (root.height - header - 2 * pad - 2 * gap) / 3;
                         let r1-bot = header + pad + rowh;
                         let r2-bot = r1-bot + gap + rowh;
+                        // Fixed screens sit after the dynamic system block.
+                        let local-page  = 2 + root.systems.length;
+                        let alerts-page = 3 + root.systems.length;
 
                         if self.mouse-y < header {
                             if self.mouse-x > root.width - 80px {
                                 root.current-page = 1;
                             }
                         } else if self.mouse-y < r1-bot {
-                            // Row 1: LOCAL (page 5) | VPS (page 2)
-                            root.current-page = self.mouse-x < root.width / 2 ? 5 : 2;
+                            // Row 1: LOCAL | system slot 0 (page 2). With no
+                            // systems, LOCAL spans the row.
+                            if root.systems.length > 0 {
+                                root.current-page = self.mouse-x < root.width / 2 ? local-page : 2;
+                            } else {
+                                root.current-page = local-page;
+                            }
                         } else if self.mouse-y < r2-bot {
-                            // Row 2: NAS (page 3) | HA (page 4) | GITHUB (page 1)
-                            root.current-page = self.mouse-x < root.width / 3 ? 3
-                                              : (self.mouse-x < 2 * root.width / 3 ? 4 : 1);
+                            // Row 2: [slot1 (3)][slot2 (4)][GITHUB (1)] — GITHUB
+                            // always last; slot tiles appear as systems exist, so
+                            // the tap split tracks the visible column count.
+                            if root.systems.length > 2 {
+                                root.current-page = self.mouse-x < root.width / 3 ? 3
+                                                  : (self.mouse-x < 2 * root.width / 3 ? 4 : 1);
+                            } else if root.systems.length > 1 {
+                                root.current-page = self.mouse-x < root.width / 2 ? 3 : 1;
+                            } else {
+                                root.current-page = 1;
+                            }
                         } else {
-                            // ALERTS row (page 6)
-                            root.current-page = 6;
+                            root.current-page = alerts-page;
                         }
                     } else {
                         if self.mouse-x < 80px {
